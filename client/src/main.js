@@ -110,9 +110,7 @@ const tmpV = new THREE.Vector3();
 
 const hud = new Hud({
   onChatSend: (text) => net.chat(text),
-  onEmote: (emote) => net.emote(emote),
-  onBark: () => net.bark(),
-  onSniff: () => beginSniff(),
+  onAction: runHudAction,
 });
 
 function beginSniff() {
@@ -122,35 +120,88 @@ function beginSniff() {
   net.sniff();
 }
 
+function biteNearestRunner() {
+  if (characterSpecies(myCustom) !== "dog") return;
+  const target = nearestPreyPlayer(BITE_RANGE);
+  if (target !== null) net.bite(target);
+}
+
+function grabOrDropBall() {
+  if (net.myBall !== null) {
+    net.drop();
+    return;
+  }
+  const ballId = nearestFreeBall(BALL_GRAB_RANGE);
+  if (ballId !== null) net.grab(ballId);
+}
+
+function throwDirection() {
+  return [
+    Math.sin(input.yaw),
+    Math.min(0.9, Math.max(0.12, 0.45 + input.pitch)),
+    -Math.cos(input.yaw),
+  ];
+}
+
+function quickThrow() {
+  if (net.myBall !== null) net.throw(throwDirection(), 0.75);
+}
+
+function toggleSound() {
+  const muted = audio.toggleMute();
+  hud.toast(muted ? "Sound muted (M)" : "Sound on");
+}
+
+function openChat() {
+  if (!playing) return;
+  input.enabled = false;
+  hud.openChat();
+}
+
+function runHudAction(action, value) {
+  if (action === "emote") {
+    net.emote(value);
+    return;
+  }
+  switch (action) {
+    case "bark":
+      net.bark();
+      break;
+    case "bite":
+      biteNearestRunner();
+      break;
+    case "grab":
+      grabOrDropBall();
+      break;
+    case "throw":
+      quickThrow();
+      break;
+    case "sniff":
+      beginSniff();
+      break;
+    case "mute":
+      toggleSound();
+      break;
+    case "journal":
+      hud.toggleJournal();
+      break;
+    case "chat":
+      openChat();
+      break;
+  }
+}
+
 // ── input wiring ─────────────────────────────────────────────────────────────
 let throwArmed = false; // charging with a ball in mouth
 const input = new Input(renderer.domElement, {
-  bark: () => net.bark(),
-  bite: () => {
-    if (characterSpecies(myCustom) !== "dog") return;
-    const target = nearestPreyPlayer(BITE_RANGE);
-    if (target !== null) net.bite(target);
-  },
-  grabDrop: () => {
-    if (net.myBall !== null) {
-      net.drop();
-      return;
-    }
-    const ballId = nearestFreeBall(BALL_GRAB_RANGE);
-    if (ballId !== null) net.grab(ballId);
-  },
-  emote: (emote) => net.emote(emote),
-  mute: () => {
-    const muted = audio.toggleMute();
-    hud.toast(muted ? "🔇 sound muted (M)" : "🔊 sound on");
-  },
-  sniff: () => beginSniff(),
-  journal: () => hud.toggleJournal(),
-  chatOpen: () => {
-    if (!playing) return;
-    input.enabled = false;
-    hud.openChat();
-  },
+  bark: () => runHudAction("bark"),
+  bite: biteNearestRunner,
+  grabDrop: grabOrDropBall,
+  emote: (emote) => runHudAction("emote", emote),
+  mute: toggleSound,
+  sniff: () => runHudAction("sniff"),
+  journal: () => runHudAction("journal"),
+  chatOpen: openChat,
   throwStart: () => {
     throwArmed = net.myBall !== null;
   },
@@ -159,8 +210,7 @@ const input = new Input(renderer.domElement, {
     if (!throwArmed || net.myBall === null) return;
     throwArmed = false;
     // Aim along the camera: yaw forward + a pitch-driven arc.
-    const up = Math.min(0.9, Math.max(0.12, 0.45 + input.pitch));
-    net.throw([Math.sin(input.yaw), up, -Math.cos(input.yaw)], power);
+    net.throw(throwDirection(), power);
   },
 });
 
@@ -801,8 +851,8 @@ initLobby({
 
     const discoveries = hud.getDiscoveryIds();
     scents.setDiscovered(discoveries);
-    net.connect(name, customization, discoveries);
-    beginTutorial(() => {
+    beginTutorial(characterSpecies(customization), () => {
+      net.connect(name, customization, discoveries);
       input.enabled = true;
       renderer.domElement.requestPointerLock();
     });

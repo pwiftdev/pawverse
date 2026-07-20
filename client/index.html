@@ -1113,23 +1113,31 @@
         border-color: var(--accent2);
       }
 
-      /* — chat (bottom-left) — */
+      /* — chat (bottom-right) — */
       #chat-log {
         position: absolute;
-        left: 16px;
-        bottom: 18px;
-        width: 300px;
+        right: 20px;
+        bottom: 22px;
+        width: min(440px, calc(100vw - 40px));
+        max-height: 240px;
+        overflow: hidden;
         display: flex;
         flex-direction: column;
-        gap: 3px;
-        font-size: 12.5px;
+        justify-content: flex-end;
+        gap: 6px;
+        font-size: 14px;
         text-shadow: 0 1px 3px #000;
       }
       .chat-line {
-        padding: 2px 0;
+        padding: 7px 11px;
+        background: rgba(10, 13, 21, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 9px;
+        backdrop-filter: blur(8px);
         animation: chatIn 0.2s ease;
-        line-height: 1.35;
+        line-height: 1.45;
         transition: opacity 1.2s;
+        overflow-wrap: anywhere;
       }
       .chat-line b {
         color: var(--gold);
@@ -1145,9 +1153,9 @@
       }
       #chat-wrap {
         position: absolute;
-        left: 16px;
-        bottom: 18px;
-        width: 300px;
+        right: 20px;
+        bottom: 22px;
+        width: min(440px, calc(100vw - 40px));
         display: none;
         pointer-events: auto;
       }
@@ -1157,12 +1165,13 @@
         border: 1px solid var(--gold);
         backdrop-filter: blur(10px);
         border-radius: 11px;
-        padding: 10px 14px;
+        padding: 14px 16px;
+        font-size: 14px;
         outline: none;
         box-shadow: 0 0 16px var(--gold-glow);
       }
       #chat-wrap.open ~ #chat-log {
-        bottom: 64px;
+        bottom: 82px;
       }
 
       /* — action bar (bottom-center) — */
@@ -1177,7 +1186,8 @@
         pointer-events: auto;
       }
       #emote-bar {
-        display: flex;
+        display: grid;
+        grid-template-columns: repeat(7, 48px);
         gap: 6px;
         background: var(--panel);
         border: 1px solid var(--line);
@@ -1206,6 +1216,11 @@
         font-size: 19px;
         line-height: 1;
       }
+      .emote-btn .ico.word {
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 0.6px;
+      }
       .emote-btn .key {
         font-size: 8.5px;
         color: var(--dim);
@@ -1221,6 +1236,13 @@
         box-shadow:
           0 6px 18px rgba(0, 0, 0, 0.5),
           0 0 12px var(--gold-glow);
+      }
+      .emote-btn:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+        transform: none;
+        border-color: var(--line);
+        box-shadow: none;
       }
       .emote-btn:hover .key {
         color: var(--gold);
@@ -1264,7 +1286,7 @@
       }
       #hint-panel {
         position: absolute;
-        bottom: 84px;
+        bottom: 145px;
         right: -8px;
         width: 300px;
         padding: 12px 15px;
@@ -1290,7 +1312,7 @@
       #power-wrap {
         position: absolute;
         left: 50%;
-        bottom: 106px;
+        bottom: 160px;
         transform: translateX(-50%);
         width: 220px;
         display: none;
@@ -1433,6 +1455,36 @@
         font-size: 14px;
         line-height: 1.6;
       }
+      #tutorial-role {
+        max-width: 570px;
+        margin: 18px auto 0;
+        padding: 14px 18px;
+        border: 1px solid var(--line-lit);
+        border-radius: 13px;
+        background: rgba(255, 255, 255, 0.035);
+        text-align: left;
+      }
+      #tutorial-role[data-role="hunter"] {
+        border-color: rgba(255, 209, 102, 0.5);
+        box-shadow: inset 3px 0 0 var(--gold);
+      }
+      #tutorial-role[data-role="runner"] {
+        border-color: rgba(123, 232, 168, 0.5);
+        box-shadow: inset 3px 0 0 var(--accent2);
+      }
+      #tutorial-role-title {
+        display: block;
+        color: var(--text);
+        font-size: 14px;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+      }
+      #tutorial-role-text {
+        margin-top: 6px;
+        color: var(--dim);
+        font-size: 12.5px;
+        line-height: 1.55;
+      }
       .tutorial-grid {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -1495,6 +1547,12 @@
         margin-top: 18px;
         color: var(--faint);
         font-size: 12px;
+      }
+      @media (max-width: 1250px) {
+        #action-wrap {
+          left: 16px;
+          transform: none;
+        }
       }
       @media (max-width: 900px), (hover: none) and (pointer: coarse) {
         #desktop-notice {
@@ -1748,8 +1806,50 @@
           >
             <span class="ico">◌</span><span class="key">N</span>
           </button>
+          <button
+            class="emote-btn"
+            data-action="bite"
+            data-label="Bite — dogs catch player cats and raccoons"
+          >
+            <span class="ico word">BITE</span><span class="key">F</span>
+          </button>
+          <button
+            class="emote-btn"
+            data-action="grab"
+            data-label="Grab or drop the nearest ball"
+          >
+            <span class="ico word">GRAB</span><span class="key">E</span>
+          </button>
+          <button
+            class="emote-btn"
+            data-action="throw"
+            data-label="Quick throw — keyboard Q supports charged throws"
+          >
+            <span class="ico word">THROW</span><span class="key">Q</span>
+          </button>
+          <button
+            class="emote-btn"
+            data-action="mute"
+            data-label="Mute or restore game sound"
+          >
+            <span class="ico word">SOUND</span><span class="key">M</span>
+          </button>
+          <button
+            class="emote-btn"
+            data-action="journal"
+            data-label="Open the Trail Journal"
+          >
+            <span class="ico word">LOG</span><span class="key">J</span>
+          </button>
+          <button
+            class="emote-btn"
+            data-action="chat"
+            data-label="Open park chat"
+          >
+            <span class="ico word">CHAT</span><span class="key">ENTER</span>
+          </button>
         </div>
-        <button id="help-btn">❓</button>
+        <button id="help-btn" aria-label="Show controls">?</button>
         <div id="hint-panel" class="hud-card">
           <kbd>WASD</kbd> move · <kbd>Shift</kbd> sprint ·
           <kbd>Space</kbd> jump<br />
@@ -1785,6 +1885,10 @@
           Meet other animals, explore the island, and make your own stories.
           Here are the essentials before your paws hit the ground.
         </p>
+        <div id="tutorial-role" data-role="runner">
+          <strong id="tutorial-role-title">Your objective</strong>
+          <p id="tutorial-role-text"></p>
+        </div>
         <div class="tutorial-grid">
           <div class="tutorial-step">
             <span>1 · Run free</span>

@@ -69,7 +69,7 @@ const OBJ_LS_KEY = "pawverse.goals";
 const JOURNAL_LS_KEY = "pawverse.journal.v1";
 
 export class Hud {
-  constructor({ onChatSend, onEmote, onBark, onSniff }) {
+  constructor({ onChatSend, onAction }) {
     this.el = {
       hud: $("hud"),
       zoomies: $("s-zoomies"),
@@ -109,6 +109,7 @@ export class Hud {
       journalXp: $("journal-xp"),
       journalDiscoveries: $("journal-discoveries"),
       journalEvents: $("journal-events"),
+      biteButton: document.querySelector('[data-action="bite"]'),
     };
     this.lastZoomies = 0;
     this.chatOpen = false;
@@ -133,10 +134,10 @@ export class Hud {
 
     // emote bar (buttons never steal keyboard focus from the game)
     for (const btn of document.querySelectorAll(".emote-btn")) {
+      btn.setAttribute("aria-label", btn.dataset.label || "Game action");
       btn.addEventListener("click", () => {
-        if (btn.dataset.emote) onEmote(btn.dataset.emote);
-        else if (btn.dataset.action === "bark") onBark();
-        else if (btn.dataset.action === "sniff") onSniff();
+        if (btn.dataset.emote) onAction("emote", btn.dataset.emote);
+        else if (btn.dataset.action) onAction(btn.dataset.action);
         btn.blur();
       });
     }
@@ -211,6 +212,7 @@ export class Hud {
     this.el.ufPortrait.style.boxShadow = `0 0 16px ${coatColor}66, inset 0 0 12px rgba(0,0,0,0.6)`;
     this.el.lifeWrap.hidden = species === "dog";
     this.el.roleLabel.textContent = species === "dog" ? "Hunter" : "Runner";
+    this.el.biteButton.disabled = species !== "dog";
   }
 
   /** Append a line to the bottom-left chat log (auto-fading, capped). */

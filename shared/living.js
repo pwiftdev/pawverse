@@ -53,7 +53,7 @@ export const PARK_EVENT_DEFS = [
   { kind: "fetch", label: "Pack Fetch Frenzy", target: 6 },
   { kind: "howl", label: "Moon Chorus", target: 3 },
   { kind: "treasure", label: "Treasure Trail", target: 3 },
-  { kind: "chase", label: "Squirrel Patrol", target: 4 },
+  { kind: "chase", label: "Raccoon Patrol", target: 4 },
   { kind: "trick", label: "Park Talent Show", target: 3 },
 ];
 

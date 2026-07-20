@@ -24,6 +24,8 @@ export const BARK_COOLDOWN_MS = 1500;
 export const BARK_SCARE_RADIUS = 7; // NPCs within this flinch/flee
 export const BITE_COOLDOWN_MS = 2000;
 export const BITE_RANGE = 2.6;
+export const PVP_MAX_LIFE = 3;
+export const PVP_RESPAWN_PROTECTION_MS = 5000;
 export const PET_RANGE = 3.2; // sit this close to an NPC to get petted
 export const PET_TIME_MS = 1500; // sit still this long before the NPC reacts
 export const EMOTE_COOLDOWN_MS = 400;
@@ -45,13 +47,13 @@ export const CHAT_TTL_MS = 4000;
 export const HOWL_GROUP_RADIUS = 15; // dogs howling together within this radius
 export const HOWL_GROUP_WINDOW_MS = 3000;
 
-// Squirrels
-export const SQUIRREL_COUNT = 7;
-export const SQUIRREL_ALERT_RADIUS = 7; // dog this close → squirrel bolts
-export const SQUIRREL_TAG_RADIUS = 1.8; // dog this close mid-flee → chased off!
-export const SQUIRREL_FLEE_SPEED = 6.8;
-export const SQUIRREL_HIDE_MS = 18_000; // time spent hiding up the tree
-export const SQUIRREL_FORAGE_SPEED = 1.3;
+// Raccoons
+export const RACCOON_COUNT = 7;
+export const RACCOON_ALERT_RADIUS = 7; // dog this close → raccoon bolts
+export const RACCOON_TAG_RADIUS = 1.8; // dog this close mid-flee → chased off!
+export const RACCOON_FLEE_SPEED = 6.8;
+export const RACCOON_HIDE_MS = 18_000; // time spent hiding up the tree
+export const RACCOON_FORAGE_SPEED = 1.3;
 
 // Buried treasure
 export const DIG_RADIUS = 2.4; // dig within this of a mound
@@ -80,7 +82,7 @@ export const POINTS = {
   RETURN: 10, // bring a ball back to a spawner pad
   GROUP_HOWL: 10, // synced howl bonus
   PET: 5, // NPC pets you
-  CHASE: 8, // chase a squirrel up a tree
+  CHASE: 8, // chase a raccoon up a tree
   ECHO: 5, // howl from Howl Rock — heard across the park
   TRICK: 5, // trick show for a human (also +1 treat)
   DISCOVERY: 8, // first sniff discovery per session

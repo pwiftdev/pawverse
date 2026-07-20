@@ -1,6 +1,6 @@
 // ─── Procedural character factory ────────────────────────────────────────────
-// Builds low-poly dogs from breed `build` params (shared/breeds.js) and simple
-// NPC humans — zero external assets. Every dog is a small hierarchy of named
+// Builds low-poly playable animals from shared character presets and simple
+// NPC humans and wildlife. Every character is a hierarchy of named
 // pivots that animator.js poses procedurally:
 //
 //   root (faces +Z)
@@ -8,10 +8,10 @@
 //   │   ├─ headPivot   (neck — pitch for howl/dig)
 //   │   ├─ legs[4]     (hip pivots: FL FR BL BR)
 //   │   └─ tailPivot   (wag)
-//   └─ (scaled by breed.scale × custom.size)
+//   └─ (scaled by preset.scale × custom.size)
 
 import * as THREE from "three";
-import { resolveBreed } from "../../shared/breeds.js";
+import { resolveCharacter } from "../../shared/breeds.js";
 
 const matCache = new Map();
 const contactShadowMaterial = new THREE.MeshBasicMaterial({
@@ -58,14 +58,15 @@ function ball(r, color, ws = 7, hs = 5) {
 }
 
 /**
- * Build a dog from a customization object {breed, primary, secondary, pattern,
+ * Build a character from {breed, primary, secondary, pattern,
  * size, collar, accessory, name}. Returns { group, parts, mouth }.
  */
-export function makeDog(custom) {
-  const breed = resolveBreed(custom);
-  const b = breed.build;
-  const primary = custom.primary || breed.primary;
-  const secondary = custom.secondary || breed.secondary;
+export function makeCharacter(custom) {
+  const preset = resolveCharacter(custom);
+  const b = preset.build;
+  const species = preset.species;
+  const primary = custom.primary || preset.primary;
+  const secondary = custom.secondary || preset.secondary;
 
   const root = new THREE.Group();
   const contactShadow = new THREE.Mesh(
@@ -142,6 +143,18 @@ export function makeDog(custom) {
       body.add(spot);
     }
   }
+  if (custom.pattern === "stripes") {
+    for (const z of [-0.32, -0.05, 0.22]) {
+      const stripe = box(
+        b.bodyH * 0.99,
+        b.bodyH * 0.16,
+        b.bodyLen * 0.12,
+        secondary,
+      );
+      stripe.position.set(0, b.bodyH * 0.42, z * b.bodyLen);
+      body.add(stripe);
+    }
+  }
 
   // ── head (on a neck pivot so it can pitch for howl/dig) ──
   const headPivot = new THREE.Group();
@@ -158,11 +171,17 @@ export function makeDog(custom) {
     maskPatch.position.set(0, b.headR * 0.38, b.headR * 0.62);
     headPivot.add(maskPatch);
   }
+  const muzzleColor =
+    species === "raccoon"
+      ? shade(primary, 1.25)
+      : custom.pattern === "none"
+        ? primary
+        : secondary;
   const snout = box(
     b.headR * 0.75,
     b.headR * 0.6,
     b.snoutLen + 0.08,
-    custom.pattern === "none" ? primary : secondary,
+    muzzleColor,
   );
   snout.position.set(0, b.headR * 0.3, b.headR + b.snoutLen / 2);
   headPivot.add(snout);
@@ -171,7 +190,7 @@ export function makeDog(custom) {
   headPivot.add(nose);
   // cheeks round out the muzzle
   for (const side of [-1, 1]) {
-    const cheek = ball(b.headR * 0.34, primary, 6, 4);
+    const cheek = ball(b.headR * 0.34, muzzleColor, 6, 4);
     cheek.position.set(side * b.headR * 0.42, b.headR * 0.3, b.headR * 0.72);
     headPivot.add(cheek);
   }
@@ -190,11 +209,28 @@ export function makeDog(custom) {
     eyes.push(eye);
   }
   // tongue (hidden unless the animator shows it — happy/panting dogs)
-  const tongue = box(b.headR * 0.3, 0.03, 0.2, "#e87a8a");
-  tongue.position.set(0, b.headR * 0.08, b.headR + b.snoutLen * 0.6);
-  tongue.userData.restZ = tongue.position.z;
-  tongue.visible = false;
-  headPivot.add(tongue);
+  let tongue = null;
+  if (species === "dog") {
+    tongue = box(b.headR * 0.3, 0.03, 0.2, "#e87a8a");
+    tongue.position.set(0, b.headR * 0.08, b.headR + b.snoutLen * 0.6);
+    tongue.userData.restZ = tongue.position.z;
+    tongue.visible = false;
+    headPivot.add(tongue);
+  }
+  if (species === "cat") {
+    for (const side of [-1, 1]) {
+      for (const y of [0.2, 0.3, 0.4]) {
+        const whisker = box(b.headR * 0.7, 0.008, 0.008, "#e8e3db");
+        whisker.position.set(
+          side * b.headR * 0.72,
+          b.headR * y,
+          b.headR + b.snoutLen * 0.8,
+        );
+        whisker.rotation.z = side * (y - 0.3) * 0.45;
+        headPivot.add(whisker);
+      }
+    }
+  }
   // ears
   const ears = [];
   for (const side of [-1, 1]) {
@@ -319,13 +355,30 @@ export function makeDog(custom) {
     tail = box(0.09, 0.3, 0.14, secondary);
     tail.rotation.x = -0.9;
     tail.position.set(0, 0.12, -0.14);
+  } else if (b.tail === "long" || b.tail === "ringed") {
+    tail = new THREE.Group();
+    const segmentCount = b.tail === "ringed" ? 7 : 8;
+    for (let i = 0; i < segmentCount; i++) {
+      const segment = ball(
+        Math.max(0.045, 0.075 - i * 0.004),
+        b.tail === "ringed" && i % 2 ? secondary : primary,
+        6,
+        4,
+      );
+      segment.position.set(0, i * 0.035, -0.06 - i * 0.09);
+      tail.add(segment);
+    }
+    tail.rotation.x = b.tail === "long" ? -0.35 : -0.15;
+    tail.position.set(0, 0.05, -0.02);
   } else {
     // straight
     tail = box(0.07, 0.07, 0.38, primary);
     tail.rotation.x = -0.5;
     tail.position.set(0, 0.08, -0.16);
   }
-  tail.castShadow = true;
+  tail.traverse((part) => {
+    if (part.isMesh) part.castShadow = true;
+  });
   tailPivot.add(tail);
 
   // ── mouth anchor (held balls attach here; must match server mouthPos scale) ──
@@ -333,7 +386,7 @@ export function makeDog(custom) {
   mouth.position.set(0, b.headR * 0.2, b.headR + b.snoutLen + 0.12);
   headPivot.add(mouth);
 
-  const scale = breed.scale * (custom.size || 1);
+  const scale = preset.scale * (custom.size || 1);
   root.scale.setScalar(scale);
 
   return {
@@ -341,7 +394,7 @@ export function makeDog(custom) {
     parts: { body, headPivot, legs, tailPivot, hipY, eyes, tongue, ears },
     mouth,
     contactShadow,
-    breed,
+    preset,
   };
 }
 
@@ -412,67 +465,69 @@ export function makeHuman(seed = 0) {
   return { group: root, parts: { torso, arms, legs } };
 }
 
-// ─── Squirrels ───────────────────────────────────────────────────────────────
+// ─── Raccoons ───────────────────────────────────────────────────────────────
 
-const SQUIRREL_FURS = ["#a4623a", "#8a5230", "#b87a4a", "#6e4a34"];
+const RACCOON_FURS = ["#73787b", "#8b8f91", "#686d72", "#8a6657"];
 
 /**
- * Low-poly park squirrel (faces +Z). Parts: body, headPivot, tailPivot —
- * posed by animator.animateSquirrel per server AI state.
+ * Low-poly park raccoon (faces +Z). Parts: body, headPivot, tailPivot —
+ * posed by animator.animateRaccoon per server AI state.
  */
-export function makeSquirrel(seed = 0) {
-  const fur = SQUIRREL_FURS[seed % SQUIRREL_FURS.length];
-  const belly = "#e8d5b8";
+export function makeRaccoon(seed = 0) {
+  const fur = RACCOON_FURS[seed % RACCOON_FURS.length];
+  const dark = "#25292d";
+  const muzzle = "#c6c1b5";
 
   const root = new THREE.Group();
   const body = new THREE.Group();
-  body.position.y = 0.16;
+  body.position.y = 0.22;
   root.add(body);
 
-  const torso = ball(0.14, fur, 7, 5);
-  torso.scale.set(0.85, 0.9, 1.25);
+  const torso = ball(0.2, fur, 7, 5);
+  torso.scale.set(0.9, 0.85, 1.35);
   body.add(torso);
-  const chest = ball(0.09, belly, 6, 4);
-  chest.position.set(0, -0.02, 0.08);
+  const chest = ball(0.13, muzzle, 6, 4);
+  chest.position.set(0, -0.03, 0.13);
   body.add(chest);
 
   const headPivot = new THREE.Group();
-  headPivot.position.set(0, 0.1, 0.14);
+  headPivot.position.set(0, 0.12, 0.22);
   body.add(headPivot);
-  const head = ball(0.095, fur, 7, 5);
-  head.position.set(0, 0.03, 0.03);
+  const head = ball(0.145, fur, 7, 5);
+  head.position.set(0, 0.04, 0.04);
   headPivot.add(head);
-  const snout = ball(0.045, belly, 5, 4);
-  snout.position.set(0, 0.0, 0.12);
+  const mask = ball(0.125, dark, 7, 5);
+  mask.scale.set(1.08, 0.62, 0.72);
+  mask.position.set(0, 0.035, 0.13);
+  headPivot.add(mask);
+  const snout = ball(0.07, muzzle, 5, 4);
+  snout.position.set(0, -0.015, 0.18);
   headPivot.add(snout);
-  const nose = ball(0.018, "#2a1c14", 4, 3);
-  nose.position.set(0, 0.005, 0.155);
+  const nose = ball(0.025, "#111315", 4, 3);
+  nose.position.set(0, 0, 0.24);
   headPivot.add(nose);
   for (const side of [-1, 1]) {
-    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.07, 4), mat(fur));
-    ear.position.set(side * 0.055, 0.12, 0.0);
+    const ear = ball(0.055, fur, 5, 4);
+    ear.position.set(side * 0.1, 0.15, 0.015);
     headPivot.add(ear);
-    const eye = ball(0.016, "#141414", 4, 3);
-    eye.position.set(side * 0.06, 0.05, 0.1);
+    const eye = ball(0.022, "#090a0b", 4, 3);
+    eye.position.set(side * 0.076, 0.065, 0.205);
     headPivot.add(eye);
   }
 
-  // signature fluffy S-curve tail: stacked spheres on a pivot
   const tailPivot = new THREE.Group();
-  tailPivot.position.set(0, 0.04, -0.15);
+  tailPivot.position.set(0, 0.07, -0.24);
   body.add(tailPivot);
-  const tailCurve = [
-    [0, 0.0, -0.06],
-    [0, 0.06, -0.12],
-    [0, 0.16, -0.14],
-    [0, 0.26, -0.1],
-    [0, 0.32, -0.02],
-  ];
-  tailCurve.forEach(([x, y, z], i) => {
-    const seg = ball(0.05 + Math.sin((i / 4) * Math.PI) * 0.035, fur, 6, 4);
-    seg.position.set(x, y, z);
+  for (let i = 0; i < 7; i++) {
+    const seg = ball(
+      Math.max(0.045, 0.085 - i * 0.006),
+      i % 2 ? dark : fur,
+      6,
+      4,
+    );
+    seg.position.set(0, i * 0.018, -0.05 - i * 0.075);
     tailPivot.add(seg);
-  });
+  }
 
   // tiny legs (kept static; hopping is body motion)
   for (const [sx, sz] of [
@@ -481,8 +536,8 @@ export function makeSquirrel(seed = 0) {
     [-1, -1],
     [1, -1],
   ]) {
-    const leg = box(0.035, 0.09, 0.035, fur);
-    leg.position.set(sx * 0.07, -0.13, sz * 0.09);
+    const leg = box(0.055, 0.13, 0.055, dark);
+    leg.position.set(sx * 0.1, -0.18, sz * 0.14);
     body.add(leg);
   }
 

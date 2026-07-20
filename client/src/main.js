@@ -14,14 +14,15 @@ import {
 import { EVENTS } from "../../shared/protocol.js";
 import { deriveAnim } from "../../shared/movement.js";
 import { groundHeightAt, isWaterAt } from "../../shared/world.js";
+import { resolveCharacter } from "../../shared/breeds.js";
 import { buildWorld } from "./world.js";
 import {
-  makeDog,
+  makeCharacter,
   makeHuman,
-  makeSquirrel,
+  makeRaccoon,
   makeTextSprite,
-} from "./dogfactory.js";
-import { animateDog, animateHuman, animateSquirrel } from "./animator.js";
+} from "./characterfactory.js";
+import { animateCharacter, animateHuman, animateRaccoon } from "./animator.js";
 import { Effects, PawPrints } from "./effects.js";
 import { GameAudio } from "./audio.js";
 import { Net } from "./net.js";
@@ -87,14 +88,24 @@ let wakeClock = 0,
 function voiceRate(size = 1) {
   return 1.5 - 0.5 * size;
 }
-function dogSizeOf(id) {
+function characterSizeOf(id) {
   if (id === net.id) return myCustom?.size ?? 1;
   return dogViews.get(id) ? (net.dogs.get(id)?.info.c.size ?? 1) : 1;
+}
+function callSoundOf(id) {
+  const customization = id === net.id ? myCustom : net.dogs.get(id)?.info.c;
+  const species = characterSpecies(customization);
+  if (species === "cat") return "meow";
+  if (species === "raccoon") return "chitter";
+  return "bark";
+}
+function characterSpecies(customization) {
+  return resolveCharacter(customization || {}).species;
 }
 const dogViews = new Map(); // id → { view, tag, bubble?, bubbleUntil, facing, lastAnim }
 const ballMeshes = new Map(); // id → mesh
 const npcViews = new Map(); // id → human view
-const squirrelViews = new Map(); // id → squirrel view
+const raccoonViews = new Map(); // id → raccoon view
 const tmpV = new THREE.Vector3();
 
 const hud = new Hud({
@@ -116,7 +127,8 @@ let throwArmed = false; // charging with a ball in mouth
 const input = new Input(renderer.domElement, {
   bark: () => net.bark(),
   bite: () => {
-    const target = nearestDog(BITE_RANGE);
+    if (characterSpecies(myCustom) !== "dog") return;
+    const target = nearestPreyPlayer(BITE_RANGE);
     if (target !== null) net.bite(target);
   },
   grabDrop: () => {
@@ -167,10 +179,11 @@ document.getElementById("click-to-play").addEventListener("click", () => {
   renderer.domElement.requestPointerLock();
 });
 
-function nearestDog(range) {
+function nearestPreyPlayer(range) {
   let best = null,
     bestD2 = range * range;
   for (const [id, rec] of dogViews) {
+    if (characterSpecies(net.dogs.get(id)?.info.c) === "dog") continue;
     const p = rec.view.group.position;
     const d2 = (p.x - net.move.x) ** 2 + (p.z - net.move.z) ** 2;
     if (d2 < bestD2) {
@@ -217,17 +230,17 @@ net.on("event", (ev) => {
     case EVENTS.BARK:
       effects.ring(p, "#ffd166", 6);
       world.react?.(p, 7);
-      audio.play("bark", p, 1, voiceRate(dogSizeOf(ev.id)));
+      audio.play(callSoundOf(ev.id), p, 1, voiceRate(characterSizeOf(ev.id)));
       break;
     case EVENTS.HOWL:
       effects.ring(p, "#9ecbff", 10, 1.4);
-      audio.play("howl", p, 1, voiceRate(dogSizeOf(ev.id)));
+      audio.play("howl", p, 1, voiceRate(characterSizeOf(ev.id)));
       break;
     case EVENTS.ECHO:
       // park-wide: triple expanding ring + a distant answering howl
       effects.ring(p, "#c9d9ff", 30, 3);
       effects.ring(p, "#8fb8ff", 20, 2.4);
-      audio.play("howl", null, 0.7, voiceRate(dogSizeOf(ev.id)) * 0.92);
+      audio.play("howl", null, 0.7, voiceRate(characterSizeOf(ev.id)) * 0.92);
       hud.toast(
         ev.id === net.id
           ? "🌕 YOUR HOWL ECHOES ACROSS THE PARK! +5"
@@ -267,7 +280,23 @@ net.on("event", (ev) => {
         size: 0.07,
       });
       audio.play("growl", p, 0.9);
-      if (ev.to === net.id) hud.toast("🐶 play-bitten!");
+      if (ev.to === net.id)
+        hud.toast(
+          `Dog bite: ${ev.life} of ${ev.maxLife} life remaining`,
+          "bad",
+        );
+      else if (ev.from === net.id)
+        hud.toast(`Hit landed: ${ev.life} of ${ev.maxLife} life remaining`);
+      break;
+    case EVENTS.CAUGHT:
+      net.respawnPlayer(ev.target, ev.respawn);
+      if (ev.target === net.id)
+        hud.toast(
+          "You were caught. Stats reset; protected for five seconds.",
+          "bad",
+        );
+      else if (ev.by === net.id)
+        hud.toast("Caught. Three hits landed.", "good");
       break;
     case EVENTS.PICKUP:
       audio.play("pop", p ?? null);
@@ -344,7 +373,7 @@ net.on("event", (ev) => {
       const isMe = ev.id === net.id;
       const who = isMe
         ? myCustom?.name || "You"
-        : net.dogs.get(ev.id)?.info.n || "Dog";
+        : net.dogs.get(ev.id)?.info.n || "Paw";
       hud.addChatLine(who, ev.text, isMe);
       break;
     }
@@ -357,7 +386,7 @@ net.on("event", (ev) => {
         size: 0.07,
       });
       audio.play("pop", p, 0.9);
-      if (ev.dog === net.id) hud.toast("🐿️ SQUIRREL CHASED! +8", "good");
+      if (ev.dog === net.id) hud.toast("Raccoon chased! +8", "good");
       world.react?.(p, 12);
       break;
     case EVENTS.TREASURE: {
@@ -429,10 +458,10 @@ function syncDogViews(now, dt) {
   for (const [id, rec] of net.dogs) {
     let dv = dogViews.get(id);
     if (!dv) {
-      const view = makeDog(rec.info.c);
+      const view = makeCharacter(rec.info.c);
       const holder = new THREE.Group(); // tag + bubble anchor
       holder.position.y = 1.55 * (rec.info.c.size || 1);
-      const tag = makeTextSprite(rec.info.n || "Dog");
+      const tag = makeTextSprite(rec.info.n || "Paw");
       holder.add(tag);
       view.group.add(holder);
       scene.add(view.group, view.contactShadow);
@@ -462,7 +491,7 @@ function syncDogViews(now, dt) {
     dv.lean +=
       (clamp(-yawRate * 0.055 * Math.min(1, speed / 5), -0.3, 0.3) - dv.lean) *
       Math.min(1, dt * 8);
-    animateDog(dv.view, s.anim, dt, speed, dv.lean);
+    animateCharacter(dv.view, s.anim, dt, speed, dv.lean);
     if (s.anim === "swim" && dv.lastAnim !== "swim") {
       effects.burst(s.p, {
         color: "#bfe8ff",
@@ -554,24 +583,24 @@ function syncBalls(dt) {
   }
 }
 
-function syncSquirrels(now, dt) {
-  for (const [id, rec] of net.squirrels) {
-    let sv = squirrelViews.get(id);
+function syncRaccoons(now, dt) {
+  for (const [id, rec] of net.raccoons) {
+    let sv = raccoonViews.get(id);
     if (!sv) {
-      sv = makeSquirrel(id);
+      sv = makeRaccoon(id);
       scene.add(sv.group);
-      squirrelViews.set(id, sv);
+      raccoonViews.set(id, sv);
     }
     const s = net.sample(rec.buf, now);
     if (!s) continue;
     sv.group.position.set(s.p[0], s.p[1], s.p[2]);
     sv.group.rotation.y = s.ry;
-    animateSquirrel(sv, rec.st, dt);
+    animateRaccoon(sv, rec.st, dt);
   }
-  for (const [id, sv] of squirrelViews) {
-    if (!net.squirrels.has(id)) {
+  for (const [id, sv] of raccoonViews) {
+    if (!net.raccoons.has(id)) {
       scene.remove(sv.group);
-      squirrelViews.delete(id);
+      raccoonViews.delete(id);
     }
   }
 }
@@ -674,7 +703,7 @@ function frame() {
     myLean +=
       (clamp(-yawRate * 0.055 * Math.min(1, speed / 5), -0.3, 0.3) - myLean) *
       Math.min(1, dt * 8);
-    animateDog(myView, anim, dt, speed, myLean);
+    animateCharacter(myView, anim, dt, speed, myLean);
     if (anim === "swim" && prevMyAnim !== "swim") {
       effects.burst([pos.x, pos.y, pos.z], {
         color: "#bfe8ff",
@@ -727,7 +756,7 @@ function frame() {
     syncDogViews(now, dt);
     syncBalls(dt);
     syncNpcs(now, dt);
-    syncSquirrels(now, dt);
+    syncRaccoons(now, dt);
     world.updateDigs(net.digs);
     scents.update(pos, now);
     hud.updateLiving(Date.now());
@@ -749,16 +778,20 @@ initLobby({
     input.enabled = false;
     myCustom = { ...customization, name };
     hud.show();
-    hud.setIdentity(name || "Dog", customization.primary || "#e9c67a");
+    hud.setIdentity(
+      name || "Paw",
+      customization.primary || "#e9c67a",
+      characterSpecies(customization),
+    );
     audio.init(scene); // the Play click satisfies autoplay policy
 
-    myView = makeDog({ ...customization, name });
+    myView = makeCharacter({ ...customization, name });
     scene.add(myView.group, myView.contactShadow);
-    net.speedMul = myView.breed.speed;
+    net.speedMul = myView.preset.speed;
     const holder = new THREE.Group();
     holder.position.y = 1.55 * (customization.size || 1);
     holder.add(
-      makeTextSprite(name || "Dog", {
+      makeTextSprite(name || "Paw", {
         bg: "rgba(110,231,160,0.85)",
         fg: "#0c2214",
       }),
@@ -800,7 +833,7 @@ function updateAttention(view, pos, facing, dt) {
     bestD2 = d2;
     target = { x, y, z };
   };
-  for (const rec of net.squirrels.values()) {
+  for (const rec of net.raccoons.values()) {
     const sample = rec.buf[rec.buf.length - 1];
     if (sample) consider(sample.p[0], sample.p[1], sample.p[2]);
   }

@@ -1,7 +1,7 @@
 # 🐕 PAWVERSE
 
-An open-world multiplayer dog simulator on Solana. Run around a stylized park as a
-custom dog, fetch balls, bark at NPC humans, sit for pets, chase squirrels, dig up
+An open-world multiplayer animal simulator on Solana. Run around a stylized park as a
+custom dog, cat, or raccoon, fetch balls, call to NPC humans, sit for pets, chase raccoons, dig up
 buried treasure, howl with the pack — all synced in real time, with wallet-based
 identity and premium cosmetics.
 
@@ -16,9 +16,9 @@ npm run dev
 - Authoritative server → http://localhost:8080 (`/api/health`, WS at `/ws`)
 
 Open **two browser tabs** to see real-time multiplayer: move, fetch, bark, bite,
-and chat — each tab sees the other dog live.
+and chat — each tab sees the other player live.
 
-No wallet, no NFTs, no external assets required. Everything (dogs, world, audio)
+No wallet, no NFTs, no external assets required. Everything (characters, world, audio)
 is generated procedurally at runtime.
 
 ## Controls
@@ -29,8 +29,8 @@ is generated procedurally at runtime.
 | WASD                   | Move (relative to camera)                                        |
 | Shift                  | Sprint                                                           |
 | Space                  | Jump (real arc physics)                                          |
-| B                      | Bark (3D positional sound + ripple, scares NPCs, 1.5 s cooldown) |
-| F                      | Play-bite nearest dog (purely social, no damage)                 |
+| B                      | Call (3D positional sound + ripple, scares NPCs, 1.5 s cooldown) |
+| F                      | Dog bite nearest player cat/raccoon                              |
 | C                      | Sit (near an NPC → they pet & feed you)                          |
 | X / V / R / G / H      | Lay down / wag tail / roll over / dig / howl                     |
 | M                      | Mute / unmute sound                                              |
@@ -55,12 +55,12 @@ is generated procedurally at runtime.
 - **Living Park** — rotating community events ask everyone in the park to fetch,
   howl, dig, chase, or perform tricks together. Contributors share a completion
   reward, while wind, wildlife, foliage, petals, and water wakes react to play.
-- **Sniff exploration** — dog-sense pulses reveal scent trails leading to eight
+- **Sniff exploration** — scent pulses reveal trails leading to eight
   server-validated landmarks and vistas. Discoveries persist in the local Trail
   Journal alongside earned XP, explorer levels, goals, and completed park events.
 - **NPC memory and routines** — joggers, walkers, trainers, and picnickers move
-  at different rhythms. Humans remember dogs that treated them well or scared
-  them and greet familiar friendly dogs on later encounters.
+  at different rhythms. Humans remember players that treated them well or scared
+  them and greet familiar friendly characters on later encounters.
 - **Howl Rock** — howl from the summit stone circle and your howl echoes across
   the whole park (+5 Zoomies, park-wide event, 60 s cooldown).
 - **Trick shows** — perform 3 _different_ emotes within 6 s while a human is
@@ -76,7 +76,10 @@ is generated procedurally at runtime.
 - **Social** — sit/lay/wag near an NPC human and they'll walk over, pet you, and
   feed you treats (+happiness, +treats, +rep). Bark at or bite near them and they
   flee (−rep). Reputation meter runs **Good Boy ↔ Menace**.
-- **Squirrels** — 7 of them forage under the trees. Get close and they freeze,
+- **Dog chase PvP** — player cats and raccoons can flee from player dogs. Three
+  server-validated dog bites catch a runner, respawn them at the park entrance,
+  reset their session stats, and grant five seconds of spawn protection.
+- **Raccoons** — 7 of them forage under the trees. Get close and they freeze,
   then bolt. Tag one mid-flee (+8 Zoomies) and it escapes up a tree, reappearing
   elsewhere later.
 - **Buried treasure** — sparkling dirt mounds hide loot. Dig (G) on one for a
@@ -88,19 +91,20 @@ is generated procedurally at runtime.
   fence are all solid, resolved by the same shared code on server and client so
   prediction never fights the server. Benches are low: jump over them. The yard
   fence isn't: use the gate.
-- **Leaderboard & goals** — live Top Dogs board (by Zoomies) broadcast every 3 s,
+- **Leaderboard & goals** — live Top Paws board (by Zoomies) broadcast every 3 s,
   plus a "Pup Goals" checklist (bark, fetch, mid-air catch, get petted, swim,
-  group howl, squirrel chase, treasure dig) tracked on the HUD.
+  group howl, raccoon chase, treasure dig) tracked on the HUD.
 - **Multiplayer** — authoritative Node server at 30 Hz, 15 Hz snapshots with
   interest management (70 m radius culling, 50+ dogs per zone), client-side
   prediction + server reconciliation for your own dog, 150 ms interpolation for
   everyone else.
-- **Customization** — a full creator screen: breed cards with stat bars (10
-  breeds incl. a deterministic Mutt mixer), coat palettes + custom colors,
+- **Customization** — a full creator screen with species tabs and 17 presets:
+  10 dog breeds (including a deterministic Mutt mixer), 4 cats, and 3 raccoons,
+  plus coat palettes, custom colors,
   patterns, size, collar colors, accessories, drag-to-rotate preview with poses,
   and a one-click randomizer. Saved to localStorage, and to your wallet address
   when connected.
-- **HUD** — minimap with live positions of dogs and squirrels, leaderboard,
+- **HUD** — minimap with live positions of players and ambient raccoons, leaderboard,
   objectives, rotating park-event progress, mood needs, persistent Trail Journal,
   clickable emote bar, toasts, and chat bubbles.
 
@@ -109,12 +113,12 @@ is generated procedurally at runtime.
 - **Connect Wallet** supports Phantom / Backpack / any injected `window.solana`
   provider via `@solana/web3.js` (no auto-approvals — every transaction requires
   explicit wallet confirmation; the stub mint flow only _signs_ when you click).
-- Wallet address = persistent dog identity (loadout saved per address).
+- Wallet address = persistent character identity (loadout saved per address).
 - **Premium gate** — set `VITE_PREMIUM_MINT` to an SPL token mint; holders unlock
   premium breeds (Doberman, Poodle, Pug). Unset = everything unlocked.
-- **Dog NFT skins** — `fetchDogNfts()` is a clean mock (returns `[]`, works with
+- **Character NFT skins** — `fetchCharacterNfts()` is a clean mock that works with
   zero NFTs) with the Metaplex/indexer extension point marked in the code.
-- **`mintDog()`** — devnet stub that builds a transaction embedding your dog's
+- **`mintCharacter()`** — devnet stub that builds a transaction embedding your character's
   metadata and asks the wallet to sign. Clearly commented as the future mint.
 
 ## Configuration
@@ -135,7 +139,7 @@ Copy `.env.example` to `.env` (server) and set `VITE_*` vars for the client:
 ```
 /client   Vite + three.js (vanilla ESM, no React)
   src/net.js         WS client, prediction ring buffer, reconciliation, interpolation
-  src/dogfactory.js  procedural low-poly dogs/humans/squirrels (shared/breeds.js)
+  src/characterfactory.js  procedural low-poly characters/humans/raccoons
   src/animator.js    procedural gait/pose animation (no rigs, no assets)
   src/world.js       park visuals rendered FROM shared/world.js data (sky/water
                      shaders, terrain, trees, props, dig mounds, ambient life)
@@ -148,7 +152,7 @@ Copy `.env.example` to `.env` (server) and set `VITE_*` vars for the client:
   game.js            the room: players, inputs, events, scoring, leaderboard
   balls.js           ball physics incl. collider bounces
   npcs.js            human AI (wander/pet/flee)
-  squirrels.js       squirrel AI (forage/alert/flee/hide + chase rewards)
+  raccoons.js        raccoon AI (forage/alert/flee/hide + chase rewards)
   digspots.js        buried-treasure state machine
   test/multiplayer.test.mjs  two-client sync + collision + systems tests
 /shared   The contract. Imported by BOTH sides (single source of truth):
@@ -158,7 +162,7 @@ Copy `.env.example` to `.env` (server) and set `VITE_*` vars for the client:
   world.js           terrain, water, tree/bench/prop placement, colliders,
                      walls, dig spots — collision and visuals share one dataset
   constants.js       tick rates, speeds, radii, cooldowns, scoring, loot table
-  breeds.js          breed stats + procedural build params + Mutt mixer
+  breeds.js          species presets + procedural build params + Mutt mixer
 ```
 
 **Why this stack:** raw `ws` instead of Colyseus (fewer moving parts for one

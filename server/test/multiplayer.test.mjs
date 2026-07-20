@@ -16,11 +16,12 @@ import {
   BALL_SPAWNERS,
   groundHeightAt,
   HOWL_ROCK,
+  SPAWN,
 } from "../../shared/world.js";
 import { WALK_SPEED } from "../../shared/constants.js";
 import { createMoveState, stepMovement } from "../../shared/movement.js";
 import { DigSystem } from "../digspots.js";
-import { SquirrelSystem } from "../squirrels.js";
+import { RaccoonSystem } from "../raccoons.js";
 import { NpcSystem } from "../npcs.js";
 import { ParkEventSystem } from "../park-events.js";
 import { SCENT_SPOTS } from "../../shared/living.js";
@@ -114,23 +115,31 @@ const watchdog = setTimeout(() => {
 }, 14000);
 
 try {
-  // 1) Two clients join.
+  // 1) Three species join.
   const A = await connect(port);
   const B = await connect(port);
-  A.send({ t: C2S.JOIN, name: "Alpha", dog: { breed: "husky" } });
+  const C = await connect(port);
+  A.send({ t: C2S.JOIN, name: "Alpha", dog: { breed: "tabby" } });
   B.send({
     t: C2S.JOIN,
     name: "Bravo",
-    dog: { breed: "corgi" },
+    dog: { breed: "raccoon" },
     discoveries: [SCENT_SPOTS[0].id, "not-a-real-scent"],
   });
+  C.send({ t: C2S.JOIN, name: "Charlie", dog: { breed: "shiba" } });
   const wA = await A.waitFor((m) => m.t === S2C.WELCOME, 2500, "welcome A");
   const wB = await B.waitFor((m) => m.t === S2C.WELCOME, 2500, "welcome B");
+  const wC = await C.waitFor((m) => m.t === S2C.WELCOME, 2500, "welcome C");
   check(
     "both clients got WELCOME with distinct ids",
     wA.id !== undefined && wB.id !== undefined && wA.id !== wB.id,
   );
   check("WELCOME settings.tick = 30", wB.settings && wB.settings.tick === 30);
+  check(
+    "cat and raccoon character presets survive server sanitization",
+    wA.you.c.breed === "tabby" && wB.you.c.breed === "raccoon",
+  );
+  check("dog preset survives server sanitization", wC.you.c.breed === "shiba");
   check(
     "WELCOME carries full world (dogs/balls/npcs arrays)",
     Array.isArray(wB.dogs) && Array.isArray(wB.balls) && Array.isArray(wB.npcs),
@@ -216,6 +225,67 @@ try {
     chat.id === wA.id && chat.text === "hello park",
   );
 
+  // PvP is dog-versus-runner only and the server owns range, life, and respawns.
+  const cat = srv.game.players.get(wA.id);
+  const runner = srv.game.players.get(wB.id);
+  const dog = srv.game.players.get(wC.id);
+  dog.move.x = runner.move.x;
+  dog.move.z = runner.move.z;
+  runner.protectedUntil = 0;
+  runner.zoomies = 42;
+  runner.treats = 3;
+  runner.rep = 8;
+  runner.happiness = 90;
+  runner.needs = { play: 90, social: 90, explore: 90 };
+  cat.move.x = dog.move.x;
+  cat.move.z = dog.move.z;
+  srv.game.onBite(cat, { target: dog.id });
+  check("cats cannot damage dogs", dog.life === 3);
+  srv.game.onBite(dog, { target: cat.id });
+  check("dogs cannot damage protected runners", cat.life === 3);
+  dog.move.x = runner.move.x + 20;
+  srv.game.onBite(dog, { target: runner.id });
+  check("server rejects out-of-range dog bites", runner.life === 3);
+  dog.move.x = runner.move.x;
+
+  for (const expectedLife of [2, 1]) {
+    dog.lastBite = 0;
+    srv.game.onBite(dog, { target: runner.id });
+    check(
+      `dog bite reduces runner life to ${expectedLife}`,
+      runner.life === expectedLife,
+    );
+  }
+  dog.lastBite = 0;
+  const caughtPromise = B.waitFor(
+    (m) =>
+      m.t === S2C.EVENT && m.kind === EVENTS.CAUGHT && m.target === runner.id,
+    2000,
+    "PvP caught event",
+  );
+  srv.game.onBite(dog, { target: runner.id });
+  const caught = await caughtPromise;
+  check(
+    "third dog bite catches and respawns runner",
+    caught.by === dog.id &&
+      runner.life === 3 &&
+      Math.hypot(runner.move.x - SPAWN.x, runner.move.z - SPAWN.z) < 3,
+  );
+  check(
+    "catch resets runner session stats",
+    runner.zoomies === 0 &&
+      runner.treats === 0 &&
+      runner.rep === 0 &&
+      runner.happiness === 50 &&
+      runner.needs.play === 55 &&
+      runner.needs.social === 45 &&
+      runner.needs.explore === 0,
+  );
+  check(
+    "caught runner receives spawn protection",
+    runner.protectedUntil > Date.now(),
+  );
+
   // Sniff discoveries are validated against the authoritative player position.
   const scent = SCENT_SPOTS[0];
   const playerA = srv.game.players.get(wA.id);
@@ -282,8 +352,8 @@ try {
 
   // 8) WELCOME carries the new world systems.
   check(
-    "WELCOME carries squirrels + dig spots",
-    Array.isArray(wB.sq) &&
+    "WELCOME carries raccoons + dig spots",
+    Array.isArray(wB.raccoons) &&
       Array.isArray(wB.digs) &&
       wB.digs.length === DIG_SPOTS.length,
   );
@@ -438,28 +508,28 @@ try {
     }
   }
 
-  // 14) SquirrelSystem: a dog on top of a fleeing squirrel tags it (chase event).
+  // 14) RaccoonSystem: a dog on top of a fleeing raccoon tags it (chase event).
   {
-    const sqSys = new SquirrelSystem();
-    const sq = sqSys.squirrels[0];
-    const chaser = { id: 7, move: { x: sq.x, z: sq.z, y: 0 } };
+    const raccoonSys = new RaccoonSystem();
+    const raccoon = raccoonSys.raccoons[0];
+    const chaser = { id: 7, move: { x: raccoon.x, z: raccoon.z, y: 0 } };
     const dogs = new Map([[7, chaser]]);
     let chaseEv = null;
     let now = 0;
     for (let i = 0; i < 100 && !chaseEv; i++) {
       now += 100;
-      chaser.move.x = sq.x;
-      chaser.move.z = sq.z; // dog glued to the squirrel
-      const evs = sqSys.update(0.1, now, dogs);
+      chaser.move.x = raccoon.x;
+      chaser.move.z = raccoon.z;
+      const evs = raccoonSys.update(0.1, now, dogs);
       chaseEv = evs.find((e) => e.kind === "chase") || null;
     }
     check(
-      "squirrel: glued chaser eventually tags it",
+      "raccoon: glued chaser eventually tags it",
       !!chaseEv && chaseEv.dog === chaser,
     );
     check(
-      "squirrel: tagged squirrel hides (not serialized)",
-      !sqSys.serializeAll().some((s) => s.id === sq.id),
+      "raccoon: tagged raccoon hides (not serialized)",
+      !raccoonSys.serializeAll().some((s) => s.id === raccoon.id),
     );
   }
 
@@ -512,6 +582,7 @@ try {
   check("B received LEAVE when A disconnected", leave.id === wA.id);
 
   B.ws.close();
+  C.ws.close();
 } catch (err) {
   failures++;
   console.log(`FAIL  ${err.message}`);

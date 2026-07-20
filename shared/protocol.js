@@ -5,7 +5,7 @@ export const C2S = {
   JOIN: "join", // { t, name, dog }                    dog = customization object
   INPUT: "in", // { t, seq, f,b,l,r, sprint, jump, yaw, dt }
   BARK: "bark", // { t }
-  BITE: "bite", // { t, target }                       target dog id
+  BITE: "bite", // { t, target }                       target player id
   EMOTE: "emote", // { t, emote }                        sit|lay|wag|roll|dig|howl|none
   GRAB: "grab", // { t, ball }                         ball id
   DROP: "drop", // { t }
@@ -15,12 +15,12 @@ export const C2S = {
 };
 
 export const S2C = {
-  WELCOME: "welcome", // { t, id, tick, you, dogs, balls, npcs, sq, digs, settings }
-  STATE: "state", // { t, tick, ack, dogs, balls, npcs, sq, digs }  interest-filtered
+  WELCOME: "welcome", // { t, id, tick, you, dogs, balls, npcs, raccoons, digs, settings }
+  STATE: "state", // { t, tick, ack, dogs, balls, npcs, raccoons, digs }  interest-filtered
   JOIN: "join", // { t, dog }                          a dog entered your radius
   LEAVE: "leave", // { t, id }
   EVENT: "ev", // { t, kind, ... }                    see EVENTS
-  SCORE: "score", // { t, zoomies, happiness, treats, rep }
+  SCORE: "score", // { t, zoomies, happiness, treats, rep, life, maxLife }
   LEADERBOARD: "lb", // { t, top: [{n, z}...], rank }       every few seconds
   PARK: "park", // { t, event }                         community event state
 };
@@ -28,7 +28,8 @@ export const S2C = {
 export const EVENTS = {
   BARK: "bark", // { id, p:[x,y,z] }
   YELP: "yelp", // { id, p }
-  BITE: "bite", // { from, to, p }
+  BITE: "bite", // { from, to, p, life, maxLife }
+  CAUGHT: "caught", // { by, target, p, respawn, protectedUntil }
   HOWL: "howl", // { id, p }
   GROUP_HOWL: "grouphowl", // { ids, p }
   PICKUP: "pickup", // { dog, ball, caught }  caught = mid-air catch
@@ -39,7 +40,7 @@ export const EVENTS = {
   SCARE: "scare", // { npc, p }
   CHAT: "chat", // { id, text }
   SPLASH: "splash", // { p }
-  CHASE: "chase", // { dog, p }            squirrel chased up a tree
+  CHASE: "chase", // { dog, p }            raccoon chased up a tree
   TREASURE: "treasure", // { dog, spot, loot, zoomies, p }  dug up a treasure
   ECHO: "echo", // { id, p }             howl from Howl Rock (park-wide)
   TRICK: "trick", // { dog, npc, p }       trick show for a human
@@ -56,8 +57,8 @@ export const EVENTS = {
 // npc:  { id, p:[x,y,z], ry, st:'idle'|'walk'|'pet'|'flinch'|'flee' }
 //
 // customization: { breed, primary, secondary, pattern, size, collar, accessory, name }
-//   breed:    husky|shiba|golden|corgi|dachshund|doberman|poodle|pug|collie|mutt
-//   pattern:  none|mask|socks|spots|saddle
+//   breed:    a CHARACTER_PRESETS id (dogs, cats, and raccoons)
+//   pattern:  none|mask|socks|spots|saddle|stripes
 //   accessory: none|bandana|hat|glasses
 //   collar:   '#rrggbb' | null
 //   size:     0.7 .. 1.4

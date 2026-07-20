@@ -1,17 +1,17 @@
 // ─── Procedural animation ────────────────────────────────────────────────────
 // No rigs, no clips: every pose is computed per-frame from the animation state
-// string that BOTH sides derive via shared/movement.js deriveAnim(). Dogs and
+// string that both sides derive via shared/movement.js deriveAnim(). Characters and
 // humans keep a running phase on their view object (view.phase).
 
 /**
- * Pose a dog view (from dogfactory.makeDog) for this frame.
+ * Pose a playable character view for this frame.
  * @param view  { parts: {body, headPivot, legs, tailPivot, hipY}, phase?, squash? }
  * @param anim  idle|run|sprint|air|swim|sit|lay|wag|roll|dig|howl
  * @param dt    seconds
  * @param speed planar speed (m/s) — drives gait frequency
  * @param lean  roll into turns (rad, signed) — computed by the caller from yaw rate
  */
-export function animateDog(view, anim, dt, speed = 0, lean = 0) {
+export function animateCharacter(view, anim, dt, speed = 0, lean = 0) {
   const P = view.parts;
   view.phase = (view.phase || 0) + dt * (4 + speed * 2.2);
   const t = view.phase;
@@ -166,7 +166,7 @@ export function animateDog(view, anim, dt, speed = 0, lean = 0) {
 }
 
 /**
- * Pose an NPC human view (from dogfactory.makeHuman) for this frame.
+ * Pose an NPC human view for this frame.
  * @param view { parts: {torso, arms, legs}, phase? }
  * @param st   idle|walk|pet|wave|flinch|flee
  */
@@ -222,16 +222,16 @@ export function animateHuman(view, st, dt) {
 }
 
 /**
- * Pose a squirrel view (from dogfactory.makeSquirrel) for this frame.
+ * Pose an ambient raccoon view for this frame.
  * @param view { parts: {body, headPivot, tailPivot}, phase? }
  * @param st   forage|alert|flee
  */
-export function animateSquirrel(view, st, dt) {
+export function animateRaccoon(view, st, dt) {
   const P = view.parts;
   view.phase = (view.phase || 0) + dt;
   const t = view.phase;
 
-  P.body.position.y = 0.16;
+  P.body.position.y = 0.22;
   P.body.rotation.set(0, 0, 0);
   P.headPivot.rotation.set(0, 0, 0);
   P.tailPivot.rotation.set(0, 0, 0);
@@ -240,14 +240,14 @@ export function animateSquirrel(view, st, dt) {
     case "alert":
       // upright on hind legs, tail flagged, head scanning
       P.body.rotation.x = -1.15;
-      P.body.position.y = 0.24;
+      P.body.position.y = 0.32;
       P.headPivot.rotation.x = 1.0;
       P.tailPivot.rotation.x = 0.5 + Math.sin(t * 18) * 0.1; // nervous flicks
       break;
     case "flee": {
       // stretched-out bounding gallop
       const hop = Math.abs(Math.sin(t * 11));
-      P.body.position.y = 0.16 + hop * 0.16;
+      P.body.position.y = 0.22 + hop * 0.14;
       P.body.rotation.x = Math.sin(t * 11) * 0.35;
       P.tailPivot.rotation.x = -0.35 + Math.sin(t * 11) * 0.25; // streaming behind
       break;
@@ -255,7 +255,7 @@ export function animateSquirrel(view, st, dt) {
     default: {
       // forage
       const hop = Math.max(0, Math.sin(t * 6));
-      P.body.position.y = 0.16 + hop * 0.05;
+      P.body.position.y = 0.22 + hop * 0.04;
       P.headPivot.rotation.x = 0.35 + Math.sin(t * 2.2) * 0.25; // nibbling
       P.tailPivot.rotation.x = Math.sin(t * 3.1) * 0.14;
       P.tailPivot.rotation.y = Math.sin(t * 1.7) * 0.1;

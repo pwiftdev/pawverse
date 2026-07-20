@@ -345,6 +345,30 @@
       }
 
       /* breed cards */
+      .species-tabs {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+        margin-bottom: 12px;
+      }
+      .species-btn {
+        padding: 8px 5px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--card);
+        color: var(--dim);
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+        transition: all 0.15s;
+      }
+      .species-btn:hover,
+      .species-btn.sel {
+        color: var(--gold);
+        border-color: var(--gold);
+        background: rgba(233, 198, 122, 0.1);
+      }
       .breeds {
         display: flex;
         flex-direction: column;
@@ -749,6 +773,34 @@
         background: linear-gradient(90deg, #ffd166, #7be8a8);
         width: 50%;
         box-shadow: 0 0 10px rgba(123, 232, 168, 0.4);
+      }
+      #life-wrap {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 5px 0;
+        color: var(--faint);
+        font-size: 8px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+      }
+      #life-wrap[hidden] {
+        display: none;
+      }
+      #life-pips {
+        display: flex;
+        gap: 4px;
+      }
+      #life-pips i {
+        width: 24px;
+        height: 5px;
+        border-radius: 3px;
+        background: #252a35;
+        border: 1px solid var(--line);
+      }
+      #life-pips i.full {
+        background: var(--bad);
+        box-shadow: 0 0 6px rgba(255, 100, 100, 0.35);
       }
       .bar.rep {
         height: 7px;
@@ -1487,7 +1539,8 @@
       </header>
 
       <aside id="rail-left" class="rail panel ornate">
-        <h3 class="sec">🐶 Choose breed</h3>
+        <h3 class="sec">Choose character</h3>
+        <div class="species-tabs" id="species-row"></div>
         <div class="breeds" id="breed-grid"></div>
       </aside>
 
@@ -1524,19 +1577,19 @@
           <div id="wallet-status">
             no wallet — playing as guest (loadout saved locally)
           </div>
-          <div class="opt-label">Wallet dog skins</div>
+          <div class="opt-label">Wallet character skins</div>
           <div class="row" id="nft-skins">
             <span style="font-size: 11.5px; color: var(--dim)"
-              >connect a wallet to see your dog NFTs</span
+              >connect a wallet to see your character NFTs</span
             >
           </div>
           <button id="mint-btn" style="display: none">
-            ⛏ mint this dog (devnet stub)
+            ⛏ mint this character (devnet stub)
           </button>
           <p class="wallet-note">
-            Your wallet address is your dog's persistent identity — loadouts
-            save per-address, and holding the configured token unlocks 💎
-            premium breeds. Every transaction requires explicit wallet
+            Your wallet address is your character's persistent identity —
+            loadouts save per-address, and holding the configured token unlocks
+            💎 premium characters. Every transaction requires explicit wallet
             confirmation.
           </p>
         </section>
@@ -1554,10 +1607,10 @@
         <input
           id="dogname"
           maxlength="16"
-          placeholder="Name your dog…"
+          placeholder="Name your character…"
           autocomplete="off"
         />
-        <button id="randomize" title="Adopt a random dog">🎲</button>
+        <button id="randomize" title="Create a random character">🎲</button>
         <button id="play">ENTER THE PARK 🐾</button>
       </footer>
     </div>
@@ -1574,9 +1627,12 @@
         <div id="uf-portrait"><span id="uf-emoji">🐕</span></div>
         <div class="uf-body">
           <div class="uf-top">
-            <span id="uf-name">Dog</span><span id="rep-label">Neutral</span>
+            <span id="uf-name">Paw</span><span id="rep-label">Neutral</span>
           </div>
           <div class="bar hp"><div id="happy-fill"></div></div>
+          <div id="life-wrap" hidden>
+            <span>Life</span><span id="life-pips"></span>
+          </div>
           <div class="bar rep" id="rep-wrap">
             <div id="rep-fill"></div>
             <div id="rep-dot"></div>
@@ -1584,6 +1640,7 @@
           <div class="uf-chips">
             <span class="chip-stat">⚡ <b id="s-zoomies">0</b></span>
             <span class="chip-stat">🦴 <b id="s-treats">0</b></span>
+            <span class="chip-stat" id="role-label">Hunter</span>
           </div>
           <div id="needs">
             <label>Play</label>
@@ -1619,7 +1676,7 @@
       </div>
 
       <div id="tracker" class="hud-card ornate">
-        <h4>🏆 Top Dogs</h4>
+        <h4>🏆 Top Paws</h4>
         <div id="lb-rows">
           <div class="lb-row"><span class="n">waiting…</span></div>
         </div>
@@ -1650,7 +1707,7 @@
           <button
             class="emote-btn"
             data-emote="sit"
-            data-label="Sit — humans pet sitting dogs"
+            data-label="Sit — humans pet sitting animals"
           >
             <span class="ico">🪑</span><span class="key">C</span>
           </button>
@@ -1680,7 +1737,7 @@
           <button
             class="emote-btn"
             data-action="bark"
-            data-label="Bark — scares humans nearby"
+            data-label="Call — gets everyone’s attention"
           >
             <span class="ico">💥</span><span class="key">B</span>
           </button>
@@ -1698,7 +1755,7 @@
           <kbd>Space</kbd> jump<br />
           <kbd>E</kbd> grab/drop ball · hold <kbd>Q</kbd>/<kbd>LMB</kbd> to
           charge a throw<br />
-          <kbd>F</kbd> play-bite · <kbd>B</kbd> bark · <kbd>Enter</kbd> chat ·
+          <kbd>F</kbd> dog bite · <kbd>B</kbd> call · <kbd>Enter</kbd> chat ·
           <kbd>M</kbd> mute<br />
           <kbd>N</kbd> sniff for discoveries · <kbd>J</kbd> trail journal<br />
           emotes: <kbd>C</kbd> sit <kbd>X</kbd> lay <kbd>V</kbd> wag
@@ -1725,8 +1782,8 @@
         <img class="brand-mark" src="/pawlogo.jpeg" alt="Pawverse" />
         <h2 id="tutorial-title">Welcome to the park</h2>
         <p class="welcome-lead">
-          Meet other dogs, explore the island, and make your own stories. Here
-          are the essentials before your paws hit the ground.
+          Meet other animals, explore the island, and make your own stories.
+          Here are the essentials before your paws hit the ground.
         </p>
         <div class="tutorial-grid">
           <div class="tutorial-step">
@@ -1737,10 +1794,10 @@
             </p>
           </div>
           <div class="tutorial-step">
-            <span>2 · Be a dog</span>
+            <span>2 · Know your role</span>
             <p>
-              Press <kbd>B</kbd> to bark, <kbd>E</kbd> to grab a ball, and use
-              the action bar for tricks, digging, sniffing, and howling.
+              Dogs press <kbd>F</kbd> to catch player cats and raccoons in three
+              bites. Cats and raccoons should sprint, dodge, and escape.
             </p>
           </div>
           <div class="tutorial-step">

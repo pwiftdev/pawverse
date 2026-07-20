@@ -1,6 +1,6 @@
 // ─── HUD ─────────────────────────────────────────────────────────────────────
 // Scoreboard, reputation, toasts, throw power, chat, connection status —
-// plus the live minimap, the Top Dogs leaderboard, the Pup Goals objective
+// plus the live minimap, the Top Paws leaderboard, the Pup Goals objective
 // tracker, and the clickable emote bar. Pure DOM/canvas; the 3D layer feeds
 // it data and never touches these elements directly.
 
@@ -20,7 +20,7 @@ const $ = (id) => document.getElementById(id);
 const OBJECTIVES = [
   {
     id: "bark",
-    label: "Bark hello",
+    label: "Call hello",
     ev: (e, me) => e.kind === "bark" && e.id === me,
   },
   {
@@ -46,7 +46,7 @@ const OBJECTIVES = [
   },
   {
     id: "chase",
-    label: "Chase a squirrel",
+    label: "Chase a raccoon",
     ev: (e, me) => e.kind === "chase" && e.dog === me,
   },
   {
@@ -75,6 +75,9 @@ export class Hud {
       zoomies: $("s-zoomies"),
       treats: $("s-treats"),
       happy: $("happy-fill"),
+      lifeWrap: $("life-wrap"),
+      lifePips: $("life-pips"),
+      roleLabel: $("role-label"),
       repDot: $("rep-dot"),
       repLabel: $("rep-label"),
       power: $("power-wrap"),
@@ -202,11 +205,12 @@ export class Hud {
     return this.journal.discoveries.map((entry) => entry.id);
   }
 
-  /** Fill the unit frame with the player's dog. */
-  setIdentity(name, coatColor) {
+  setIdentity(name, coatColor, species = "dog") {
     this.el.ufName.textContent = name;
     this.el.ufPortrait.style.borderColor = coatColor;
     this.el.ufPortrait.style.boxShadow = `0 0 16px ${coatColor}66, inset 0 0 12px rgba(0,0,0,0.6)`;
+    this.el.lifeWrap.hidden = species === "dog";
+    this.el.roleLabel.textContent = species === "dog" ? "Hunter" : "Runner";
   }
 
   /** Append a line to the bottom-left chat log (auto-fading, capped). */
@@ -244,7 +248,7 @@ export class Hud {
   }
 
   /** SCORE message from the server. Toasts the zoomies delta. */
-  setScore({ zoomies, happiness, treats, rep, needs }) {
+  setScore({ zoomies, happiness, treats, rep, needs, life, maxLife }) {
     if (zoomies > this.lastZoomies)
       this.toast(`+${zoomies - this.lastZoomies} Zoomies ⚡`, "good");
     this.lastZoomies = zoomies;
@@ -260,6 +264,18 @@ export class Hud {
           ? "😈 Menace"
           : "Neutral";
     if (needs) this.setNeeds(needs);
+    if (Number.isFinite(life) && Number.isFinite(maxLife))
+      this.setLife(life, maxLife);
+  }
+
+  setLife(life, maxLife) {
+    this.el.lifePips.replaceChildren(
+      ...Array.from({ length: maxLife }, (_, index) => {
+        const pip = document.createElement("i");
+        pip.className = index < life ? "full" : "";
+        return pip;
+      }),
+    );
   }
 
   setNeeds(needs) {
@@ -495,7 +511,7 @@ export class Hud {
     this.mapBase = cv;
   }
 
-  /** Live layer: me (arrow), other dogs, squirrels. Throttled to ~15 fps. */
+  /** Live layer: me (arrow), other players, raccoons. Throttled to ~15 fps. */
   drawMinimap(net, pos) {
     const now = performance.now();
     if (now - this.lastMapDraw < 66) return;
@@ -513,7 +529,7 @@ export class Hud {
     ctx.clip();
     ctx.drawImage(this.mapBase, 0, 0);
 
-    // other dogs
+    // other players
     ctx.fillStyle = "#ffd166";
     for (const rec of net.dogs.values()) {
       const s = rec.buf[rec.buf.length - 1];
@@ -522,9 +538,9 @@ export class Hud {
       ctx.arc(size / 2 + s.p[0] * k, size / 2 + s.p[2] * k, 2.2, 0, 7);
       ctx.fill();
     }
-    // squirrels
+    // raccoons
     ctx.fillStyle = "#c9925f";
-    for (const rec of net.squirrels.values()) {
+    for (const rec of net.raccoons.values()) {
       const s = rec.buf[rec.buf.length - 1];
       if (!s) continue;
       ctx.fillRect(size / 2 + s.p[0] * k - 1, size / 2 + s.p[2] * k - 1, 2, 2);

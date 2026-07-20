@@ -51,7 +51,7 @@ export class Net {
     this.dogs = new Map(); // remote dogs: id → { info:{n,c}, buf:[], ball, chat }
     this.balls = new Map(); // id → { t, p, v, holder, spawner }
     this.npcs = new Map(); // id → { buf:[], st }
-    this.squirrels = new Map(); // id → { buf:[], st }
+    this.raccoons = new Map(); // id → { buf:[], st }
     this.digs = new Map(); // spotId → buried (1|0)
     this.parkEvent = null;
     this.listeners = new Map(); // event → Set<fn>
@@ -165,7 +165,7 @@ export class Net {
         for (const d of msg.dogs) this.upsertDog(d);
         for (const b of msg.balls) this.upsertBall(b);
         for (const n of msg.npcs) this.upsertNpc(n);
-        for (const s of msg.sq || []) this.upsertSquirrel(s);
+        for (const s of msg.raccoons || []) this.upsertRaccoon(s);
         for (const d of msg.digs || []) this.digs.set(d.id, d.b);
         this.parkEvent = msg.settings?.parkEvent || null;
         this.emit("welcome", msg);
@@ -208,7 +208,7 @@ export class Net {
     this.dogs.clear();
     this.balls.clear();
     this.npcs.clear();
-    this.squirrels.clear();
+    this.raccoons.clear();
     this.digs.clear();
   }
 
@@ -232,10 +232,10 @@ export class Net {
     for (const n of msg.npcs) {
       this.upsertNpc(n, now);
     }
-    const seenSq = new Set();
-    for (const s of msg.sq || []) {
-      seenSq.add(s.id);
-      this.upsertSquirrel(s, now);
+    const seenRaccoons = new Set();
+    for (const s of msg.raccoons || []) {
+      seenRaccoons.add(s.id);
+      this.upsertRaccoon(s, now);
     }
     for (const d of msg.digs || []) this.digs.set(d.id, d.b);
     // Entities missing from an interest-filtered snapshot left our radius (or died).
@@ -243,9 +243,9 @@ export class Net {
       if (!seenDogs.has(id)) this.dogs.delete(id);
     for (const id of this.balls.keys())
       if (!seenBalls.has(id)) this.balls.delete(id);
-    // Squirrels vanish when they hide up a tree (or leave interest).
-    for (const id of this.squirrels.keys())
-      if (!seenSq.has(id)) this.squirrels.delete(id);
+    // Raccoons vanish when they hide up a tree (or leave interest).
+    for (const id of this.raccoons.keys())
+      if (!seenRaccoons.has(id)) this.raccoons.delete(id);
     // NPCs are permanent; missing just means "out of interest" — keep last state.
     this.emit("state", msg);
   }
@@ -285,11 +285,11 @@ export class Net {
     if (rec.buf.length > 30) rec.buf.splice(0, rec.buf.length - 30);
   }
 
-  upsertSquirrel(s, now = performance.now()) {
-    let rec = this.squirrels.get(s.id);
+  upsertRaccoon(s, now = performance.now()) {
+    let rec = this.raccoons.get(s.id);
     if (!rec) {
       rec = { buf: [], st: s.st };
-      this.squirrels.set(s.id, rec);
+      this.raccoons.set(s.id, rec);
     }
     rec.st = s.st;
     rec.buf.push({ t: now, p: s.p, ry: s.ry });
@@ -422,6 +422,32 @@ export class Net {
   }
   sniff() {
     this.send({ t: C2S.SNIFF });
+  }
+
+  respawnPlayer(id, position) {
+    if (!Array.isArray(position) || position.length !== 3) return;
+    if (id === this.id) {
+      this.move = createMoveState(position[0], position[2]);
+      this.move.y = position[1];
+      this.pending = [];
+      this.myBall = null;
+      this.myAnim = "idle";
+      this.myEmote = "none";
+      this.smooth = { x: 0, y: 0, z: 0 };
+      return;
+    }
+    const rec = this.dogs.get(id);
+    if (!rec) return;
+    rec.buf = [
+      {
+        t: performance.now(),
+        p: position,
+        ry: 0,
+        v: [0, 0, 0],
+        anim: "idle",
+      },
+    ];
+    rec.ball = null;
   }
 }
 

@@ -11,6 +11,8 @@ import {
   BARK_SCARE_RADIUS,
   BITE_COOLDOWN_MS,
   BITE_RANGE,
+  PVP_MAX_LIFE,
+  PVP_RESPAWN_PROTECTION_MS,
   EMOTE_COOLDOWN_MS,
   BALL_GRAB_RANGE,
   BALL_RETURN_RANGE,
@@ -37,7 +39,7 @@ import {
   stepMovement,
   deriveAnim,
 } from "../shared/movement.js";
-import { resolveBreed } from "../shared/breeds.js";
+import { resolveCharacter } from "../shared/breeds.js";
 import {
   sanitizeName,
   sanitizeCustomization,
@@ -46,7 +48,7 @@ import {
 import { withinInterest, filterVisible } from "./interest.js";
 import { BallSystem } from "./balls.js";
 import { NpcSystem } from "./npcs.js";
-import { SquirrelSystem } from "./squirrels.js";
+import { RaccoonSystem } from "./raccoons.js";
 import { DigSystem } from "./digspots.js";
 import { ParkEventSystem } from "./park-events.js";
 
@@ -66,7 +68,7 @@ export class Game {
     this.tick = 0;
     this.ballSys = new BallSystem();
     this.npcSys = new NpcSystem();
-    this.squirrelSys = new SquirrelSystem();
+    this.raccoonSys = new RaccoonSystem();
     this.digSys = new DigSystem();
     this.parkEvents = new ParkEventSystem();
     this.lastLeaderboard = 0;
@@ -130,7 +132,7 @@ export class Game {
   join(s, msg) {
     const name = sanitizeName(msg.name);
     const custom = sanitizeCustomization(msg.dog, name);
-    const breed = resolveBreed(custom);
+    const preset = resolveCharacter(custom);
     const knownScentIds = new Set(SCENT_SPOTS.map((spot) => spot.id));
     const discoveries = new Set(
       Array.isArray(msg.discoveries)
@@ -141,16 +143,13 @@ export class Game {
     );
     const id = this.nextDogId++;
     // Slight spawn jitter so dogs don't stack on the exact same tile.
-    const move = createMoveState(
-      SPAWN.x + (Math.random() * 3 - 1.5),
-      SPAWN.z + (Math.random() * 3 - 1.5),
-    );
+    const move = createMoveState(...spawnPoint());
     const p = {
       id,
       ws: s.ws,
       name,
       custom,
-      breed,
+      preset,
       move,
       emote: "none",
       ball: null, // held ball id
@@ -159,18 +158,15 @@ export class Game {
       lastBark: 0,
       lastBite: 0,
       lastEmote: 0,
-      zoomies: 0,
-      happiness: HAPPINESS_MAX / 2,
-      treats: 0,
-      rep: 0,
-      scoreDirty: true,
+      ...initialPlayerStats(),
+      life: PVP_MAX_LIFE,
+      protectedUntil: Date.now() + PVP_RESPAWN_PROTECTION_MS,
       chat: null,
       recentEmotes: [], // [{e, t}] for trick combos
       lastTrick: 0,
       lastEcho: 0,
       lastSniff: 0,
       discoveries,
-      needs: { play: 55, social: 45, explore: 0 },
     };
     s.player = p;
     this.players.set(id, p);
@@ -186,7 +182,7 @@ export class Game {
         .map((o) => this.serializeDog(o)),
       balls: this.ballSys.serializeAll(),
       npcs: this.npcSys.serializeAll(),
-      sq: this.squirrelSys.serializeAll(),
+      raccoons: this.raccoonSys.serializeAll(),
       digs: this.digSys.serializeAll(),
       settings: {
         tick: TICK_RATE,
@@ -205,14 +201,7 @@ export class Game {
     s.player = null;
     this.players.delete(p.id);
     this.npcSys.forgetDog(p.id);
-    if (p.ball !== null) {
-      // Put the held ball back into the world where the dog stood.
-      this.ballSys.release(
-        p.ball,
-        p.move ? [p.move.x, p.move.y + 0.3, p.move.z] : [0, 0.5, 0],
-        [0, 0, 0],
-      );
-    }
+    this.releaseHeldBall(p);
     this.recentHowls = this.recentHowls.filter((h) => h.id !== p.id);
     this.broadcast({ t: S2C.LEAVE, id: p.id });
   }
@@ -243,7 +232,7 @@ export class Game {
       const dt = Math.min(MAX_DT, Math.max(0, input.dt));
       // Walking out of an emote cancels it (emote is a pose, not a lock).
       if (input.f || input.b || input.l || input.r) p.emote = "none";
-      stepMovement(p.move, input, dt, p.breed.speed);
+      stepMovement(p.move, input, dt, p.preset.speed);
       if (input.seq > p.lastSeq) p.lastSeq = input.seq;
     }
   }
@@ -289,14 +278,18 @@ export class Game {
   onBite(p, msg) {
     const now = Date.now();
     if (now - p.lastBite < BITE_COOLDOWN_MS) return;
+    if (p.preset.species !== "dog") return;
     const target = this.players.get(msg.target);
     if (!target || target === p) return;
+    if (!isPrey(target) || now < target.protectedUntil) return;
     if (
       dist2(p.move.x, p.move.z, target.move.x, target.move.z) >
       BITE_RANGE * BITE_RANGE
     )
       return;
     p.lastBite = now;
+    target.life = Math.max(0, target.life - 1);
+    target.scoreDirty = true;
     const pos = dogPos(target);
     this.sendNear(pos, {
       t: S2C.EVENT,
@@ -304,6 +297,8 @@ export class Game {
       from: p.id,
       to: target.id,
       p: pos,
+      life: target.life,
+      maxLife: PVP_MAX_LIFE,
     });
     this.sendNear(pos, {
       t: S2C.EVENT,
@@ -312,6 +307,33 @@ export class Game {
       p: pos,
     });
     this.scareNpcs(pos, BARK_SCARE_RADIUS, p);
+    if (target.life === 0) this.catchPlayer(p, target, pos, now);
+  }
+
+  catchPlayer(attacker, target, caughtAt, now) {
+    this.releaseHeldBall(target);
+    const respawn = spawnPoint();
+    target.move = createMoveState(...respawn);
+    target.inputQueue.length = 0;
+    target.emote = "none";
+    target.chat = null;
+    target.recentEmotes.length = 0;
+    target.life = PVP_MAX_LIFE;
+    target.protectedUntil = now + PVP_RESPAWN_PROTECTION_MS;
+    Object.assign(target, initialPlayerStats());
+    this.sendNear(
+      caughtAt,
+      {
+        t: S2C.EVENT,
+        kind: EVENTS.CAUGHT,
+        by: attacker.id,
+        target: target.id,
+        p: caughtAt,
+        respawn: [r3(target.move.x), r3(target.move.y), r3(target.move.z)],
+        protectedUntil: target.protectedUntil,
+      },
+      [attacker, target],
+    );
   }
 
   onEmote(p, msg) {
@@ -447,6 +469,14 @@ export class Game {
   onDrop(p) {
     if (p.ball === null) return;
     this.dropBall(p, true);
+  }
+
+  /** Release a held ball without scoring, used for disconnects and PvP catches. */
+  releaseHeldBall(p) {
+    if (p.ball === null) return;
+    const ballId = p.ball;
+    p.ball = null;
+    this.ballSys.release(ballId, this.mouthPos(p), [0, 0, 0]);
   }
 
   /** Release the held ball at mouth position with a small forward velocity. */
@@ -659,6 +689,8 @@ export class Game {
           happiness: Math.round(p.happiness),
           treats: p.treats,
           rep: p.rep,
+          life: p.life,
+          maxLife: PVP_MAX_LIFE,
           needs: {
             play: Math.round(p.needs.play),
             social: Math.round(p.needs.social),
@@ -675,7 +707,7 @@ export class Game {
     });
 
     this.handlePetEvents(this.npcSys.update(dt, now, this.players));
-    this.handleChaseEvents(this.squirrelSys.update(dt, now, this.players));
+    this.handleChaseEvents(this.raccoonSys.update(dt, now, this.players));
     this.handleTreasureEvents(this.digSys.update(dt * 1000, now, this.players));
 
     if (this.parkEvents.update(now)) {
@@ -744,7 +776,7 @@ export class Game {
     const dogs = [...this.players.values()].map((p) => this.serializeDog(p));
     const balls = this.ballSys.serializeAll();
     const npcs = this.npcSys.serializeAll();
-    const sq = this.squirrelSys.serializeAll();
+    const raccoons = this.raccoonSys.serializeAll();
     const digs = this.digSys.serializeAll(); // tiny (10 × {id,b}) — send whole
     for (const p of this.players.values()) {
       const { x, z } = p.move;
@@ -755,7 +787,7 @@ export class Game {
         dogs: filterVisible(x, z, dogs, (d) => [d.p[0], d.p[2]], p.id),
         balls: filterVisible(x, z, balls, (b) => [b.p[0], b.p[2]]),
         npcs: filterVisible(x, z, npcs, (n) => [n.p[0], n.p[2]]),
-        sq: filterVisible(x, z, sq, (s) => [s.p[0], s.p[2]]),
+        raccoons: filterVisible(x, z, raccoons, (s) => [s.p[0], s.p[2]]),
         digs,
       });
     }
@@ -769,9 +801,11 @@ export class Game {
   }
 
   /** Event broadcast to players whose dog is within interest radius of pos. */
-  sendNear(pos, msg) {
+  sendNear(pos, msg, requiredRecipients = []) {
+    const required = new Set(requiredRecipients);
     for (const p of this.players.values()) {
-      if (withinInterest(p.move.x, p.move.z, pos[0], pos[2])) this.send(p, msg);
+      if (required.has(p) || withinInterest(p.move.x, p.move.z, pos[0], pos[2]))
+        this.send(p, msg);
     }
   }
 
@@ -806,6 +840,25 @@ function dist2(ax, az, bx, bz) {
 }
 function dogPos(p) {
   return [r3(p.move.x), r3(p.move.y), r3(p.move.z)];
+}
+function spawnPoint() {
+  return [
+    SPAWN.x + (Math.random() * 3 - 1.5),
+    SPAWN.z + (Math.random() * 3 - 1.5),
+  ];
+}
+function initialPlayerStats() {
+  return {
+    zoomies: 0,
+    happiness: HAPPINESS_MAX / 2,
+    treats: 0,
+    rep: 0,
+    scoreDirty: true,
+    needs: { play: 55, social: 45, explore: 0 },
+  };
+}
+function isPrey(player) {
+  return player.preset.species === "cat" || player.preset.species === "raccoon";
 }
 /** Planar forward for a yaw, matching stepMovement's camera convention. */
 function forwardOf(yaw) {

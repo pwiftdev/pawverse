@@ -182,8 +182,8 @@ interest-management filter culls out-of-range dogs.
 
 ## Deploy
 
-The repository includes `vercel.json`, a Heroku `Procfile`, and pinned Node/npm
-runtimes.
+The repository includes `client/vercel.json`, a Heroku `Procfile`, and pinned
+Node/npm runtimes.
 
 ### Heroku server
 
@@ -208,9 +208,12 @@ it on Heroku. Add every exact Vercel preview origin you intentionally support.
 
 ### Vercel client
 
-Import the repository root. `vercel.json` runs `npm run build` and publishes
-`client/dist`. Add these build-time environment variables for Production and any
-Preview environments you use:
+Import the repository and set its Root Directory to `client`. The colocated
+`client/vercel.json` runs `npm run build` and publishes `dist`; its settings
+override stale Build Command and Output Directory values in the dashboard. Keep
+the option to include source files outside the Root Directory enabled because
+the client imports modules from `shared/`. Add these build-time environment
+variables for Production and any Preview environments you use:
 
 ```text
 VITE_WS_URL=wss://<heroku-app>.herokuapp.com/ws

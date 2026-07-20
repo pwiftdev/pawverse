@@ -3,11 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PAWVERSE 🐕</title>
-    <link
-      rel="icon"
-      href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐕</text></svg>"
-    />
+    <title>PAWVERSE</title>
+    <link rel="icon" type="image/jpeg" href="/pawlogo.jpeg" />
     <style>
       :root {
         --bg: #0a0d14;
@@ -214,12 +211,30 @@
         z-index: 3;
       }
       .logo {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .brand-mark {
+        width: 54px;
+        height: 54px;
+        border-radius: 15px;
+        object-fit: cover;
+        border: 1px solid rgba(233, 198, 122, 0.6);
+        box-shadow:
+          0 8px 24px rgba(0, 0, 0, 0.4),
+          0 0 18px var(--gold-glow);
+      }
+      .logo-copy {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 3px;
+      }
+      .logo strong {
         font-size: 26px;
         font-weight: 800;
         letter-spacing: 4px;
-        display: flex;
-        align-items: baseline;
-        gap: 10px;
         background: linear-gradient(
           100deg,
           #fff 10%,
@@ -263,6 +278,47 @@
       }
       #wallet-btn:hover {
         filter: brightness(1.25);
+        transform: translateY(-1px);
+      }
+      .lobby-actions {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+      }
+      .top-badge,
+      .social-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 40px;
+        border-radius: 12px;
+        backdrop-filter: blur(12px);
+        font-size: 13px;
+        font-weight: 800;
+        text-decoration: none;
+        transition:
+          transform 0.15s,
+          border-color 0.15s,
+          filter 0.15s;
+      }
+      .top-badge {
+        padding: 0 15px;
+        color: #241a05;
+        letter-spacing: 1px;
+        background: linear-gradient(135deg, var(--gold), var(--gold-deep));
+        border: 1px solid rgba(255, 255, 255, 0.24);
+        box-shadow: 0 0 18px var(--gold-glow);
+      }
+      .social-link {
+        width: 40px;
+        color: var(--text);
+        background: var(--panel);
+        border: 1px solid var(--line-lit);
+        font-size: 16px;
+      }
+      .social-link:hover {
+        color: var(--gold);
+        border-color: var(--gold);
         transform: translateY(-1px);
       }
 
@@ -589,6 +645,38 @@
           transparent 58%,
           rgba(7, 12, 20, 0.2) 100%
         );
+      }
+
+      #hud-brand {
+        position: absolute;
+        top: 16px;
+        left: 296px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 7px 12px 7px 7px;
+      }
+      #hud-brand img {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        object-fit: cover;
+        border: 1px solid rgba(233, 198, 122, 0.5);
+      }
+      #hud-brand strong,
+      #hud-brand small {
+        display: block;
+      }
+      #hud-brand strong {
+        color: var(--gold);
+        font-size: 11px;
+        letter-spacing: 2px;
+      }
+      #hud-brand small {
+        color: var(--faint);
+        font-size: 8px;
+        letter-spacing: 1.4px;
+        margin-top: 2px;
       }
 
       /* — unit frame (top-left) — */
@@ -1249,6 +1337,123 @@
         border-radius: 14px;
         box-shadow: 0 0 24px var(--gold-glow);
       }
+
+      .welcome-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 60;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background:
+          radial-gradient(
+            circle at 50% 35%,
+            rgba(44, 58, 92, 0.6),
+            transparent 55%
+          ),
+          rgba(5, 8, 14, 0.88);
+        backdrop-filter: blur(12px);
+      }
+      .welcome-overlay[hidden] {
+        display: none;
+      }
+      .welcome-card {
+        width: min(680px, 100%);
+        padding: 26px;
+        text-align: center;
+        background: rgba(15, 20, 31, 0.96);
+      }
+      .welcome-card .brand-mark {
+        width: 82px;
+        height: 82px;
+      }
+      .welcome-card h2 {
+        margin-top: 14px;
+        color: var(--gold);
+        font-size: 25px;
+        letter-spacing: 1.2px;
+      }
+      .welcome-lead {
+        max-width: 500px;
+        margin: 8px auto 0;
+        color: var(--dim);
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .tutorial-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin: 22px 0;
+        text-align: left;
+      }
+      .tutorial-step {
+        min-height: 126px;
+        padding: 15px;
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: var(--card);
+      }
+      .tutorial-step span {
+        display: block;
+        color: var(--gold);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+      }
+      .tutorial-step p {
+        margin-top: 8px;
+        color: var(--dim);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      .tutorial-step kbd {
+        display: inline-block;
+        padding: 1px 5px;
+        border: 1px solid var(--line-lit);
+        border-radius: 4px;
+        background: #0b0f18;
+        color: var(--text);
+        font-family: inherit;
+      }
+      .welcome-action {
+        min-width: 220px;
+        padding: 13px 24px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--gold), var(--gold-deep));
+        color: #241a05;
+        font-weight: 800;
+        letter-spacing: 1px;
+        box-shadow: 0 8px 28px var(--gold-glow);
+      }
+      .welcome-action:hover {
+        filter: brightness(1.08);
+        transform: translateY(-1px);
+      }
+      #desktop-notice {
+        display: none;
+        z-index: 100;
+      }
+      #desktop-notice .welcome-card {
+        max-width: 430px;
+      }
+      .desktop-tip {
+        margin-top: 18px;
+        color: var(--faint);
+        font-size: 12px;
+      }
+      @media (max-width: 900px), (hover: none) and (pointer: coarse) {
+        #desktop-notice {
+          display: flex;
+        }
+      }
+      @media (max-width: 720px) {
+        .tutorial-grid {
+          grid-template-columns: 1fr;
+        }
+      }
     </style>
   </head>
   <body>
@@ -1259,8 +1464,26 @@
       <div class="motes"></div>
 
       <header id="lobby-top">
-        <div class="logo">🐕 PAWVERSE <em>OPEN PARK · SOLANA</em></div>
-        <button id="wallet-btn">◎ Connect Wallet</button>
+        <div class="logo">
+          <img class="brand-mark" src="/pawlogo.jpeg" alt="" />
+          <span class="logo-copy">
+            <strong>PAWVERSE</strong>
+            <em>OPEN PARK · SOLANA</em>
+          </span>
+        </div>
+        <div class="lobby-actions">
+          <span class="top-badge">$PAW</span>
+          <a
+            class="social-link"
+            href="https://x.com/pawversePF"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Follow Pawverse on X"
+            title="Follow Pawverse on X"
+            >X</a
+          >
+          <button id="wallet-btn">◎ Connect Wallet</button>
+        </div>
       </header>
 
       <aside id="rail-left" class="rail panel ornate">
@@ -1341,6 +1564,11 @@
 
     <!-- ═══ In-game HUD ═══ -->
     <div id="hud">
+      <div id="hud-brand" class="hud-card">
+        <img src="/pawlogo.jpeg" alt="" />
+        <span><strong>PAWVERSE</strong><small>OPEN PARK</small></span>
+      </div>
+
       <!-- unit frame -->
       <div id="unit-frame" class="hud-card ornate">
         <div id="uf-portrait"><span id="uf-emoji">🐕</span></div>
@@ -1482,6 +1710,69 @@
       <div id="toasts"></div>
       <div id="click-to-play" style="display: none">
         <div>🐾 click to grab the mouse and play</div>
+      </div>
+    </div>
+
+    <div
+      id="tutorial"
+      class="welcome-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="tutorial-title"
+      hidden
+    >
+      <div class="welcome-card panel ornate">
+        <img class="brand-mark" src="/pawlogo.jpeg" alt="Pawverse" />
+        <h2 id="tutorial-title">Welcome to the park</h2>
+        <p class="welcome-lead">
+          Meet other dogs, explore the island, and make your own stories. Here
+          are the essentials before your paws hit the ground.
+        </p>
+        <div class="tutorial-grid">
+          <div class="tutorial-step">
+            <span>1 · Run free</span>
+            <p>
+              Use <kbd>WASD</kbd> to move, <kbd>Shift</kbd> to sprint, and
+              <kbd>Space</kbd> to jump. Move the mouse to look around.
+            </p>
+          </div>
+          <div class="tutorial-step">
+            <span>2 · Be a dog</span>
+            <p>
+              Press <kbd>B</kbd> to bark, <kbd>E</kbd> to grab a ball, and use
+              the action bar for tricks, digging, sniffing, and howling.
+            </p>
+          </div>
+          <div class="tutorial-step">
+            <span>3 · Explore together</span>
+            <p>
+              Follow Pup Goals, sniff out discoveries with <kbd>N</kbd>, chat
+              with <kbd>Enter</kbd>, and open the <kbd>?</kbd> panel anytime for
+              help.
+            </p>
+          </div>
+        </div>
+        <button id="tutorial-start" class="welcome-action">
+          Start exploring
+        </button>
+      </div>
+    </div>
+
+    <div
+      id="desktop-notice"
+      class="welcome-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="desktop-title"
+    >
+      <div class="welcome-card panel ornate">
+        <img class="brand-mark" src="/pawlogo.jpeg" alt="Pawverse" />
+        <h2 id="desktop-title">Your park is waiting</h2>
+        <p class="welcome-lead">
+          Pawverse is built for keyboard and mouse controls. Please visit us on
+          a desktop or laptop for the full experience.
+        </p>
+        <p class="desktop-tip">We look forward to seeing you in the park.</p>
       </div>
     </div>
 

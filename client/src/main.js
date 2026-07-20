@@ -29,6 +29,7 @@ import { Input } from "./input.js";
 import { Hud } from "./hud.js";
 import { initLobby } from "./lobby.js";
 import { ScentSystem } from "./living.js";
+import { beginTutorial } from "./onboarding.js";
 
 // ── renderer / scene ─────────────────────────────────────────────────────────
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -745,6 +746,7 @@ frame();
 initLobby({
   onPlay(name, customization) {
     playing = true;
+    input.enabled = false;
     myCustom = { ...customization, name };
     hud.show();
     hud.setIdentity(name || "Dog", customization.primary || "#e9c67a");
@@ -767,7 +769,10 @@ initLobby({
     const discoveries = hud.getDiscoveryIds();
     scents.setDiscovered(discoveries);
     net.connect(name, customization, discoveries);
-    renderer.domElement.requestPointerLock();
+    beginTutorial(() => {
+      input.enabled = true;
+      renderer.domElement.requestPointerLock();
+    });
   },
 });
 

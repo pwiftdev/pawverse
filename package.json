@@ -1,0 +1,25 @@
+{
+  "name": "pawverse",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PAWVERSE — open-world multiplayer dog simulator on Solana",
+  "engines": {
+    "node": "22.x",
+    "npm": "10.x"
+  },
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c yellow,cyan \"npm run dev --workspace server\" \"npm run dev --workspace client\"",
+    "build": "npm run build --workspace client",
+    "start": "node server/index.js",
+    "test": "node server/test/multiplayer.test.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "prettier": "^3.9.5"
+  }
+}

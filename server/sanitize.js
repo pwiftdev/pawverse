@@ -1,49 +1,21 @@
 // ─── Input sanitization ──────────────────────────────────────────────────────
 // All client-supplied data is validated/normalized here before entering state.
 
-import { CHAT_MAX_LEN } from "../shared/constants.js";
-import { CHARACTER_MAP, PATTERNS, ACCESSORIES } from "../shared/breeds.js";
+import { BLOB_COLORS, CHAT_MAX_LEN } from "../shared/constants.js";
 
-const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
-
-/** Player name: string, trimmed, 1..16 chars, else 'Paw'. */
+/** Player name: string, trimmed, 1..14 chars, else 'Blob'. */
 export function sanitizeName(name) {
-  if (typeof name !== "string") return "Paw";
+  if (typeof name !== "string") return "Blob";
   const n = name.trim();
-  if (n.length < 1 || n.length > 16) return "Paw";
+  if (n.length < 1 || n.length > 14) return "Blob";
   return n;
 }
 
-function hexOr(value, fallback) {
-  return typeof value === "string" && HEX_COLOR.test(value)
-    ? value.toLowerCase()
-    : fallback;
-}
-
-function clamp(v, lo, hi, fallback) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(hi, Math.max(lo, n));
-}
-
-/**
- * Normalize a client customization object against the contract:
- *   breed ∈ CHARACTER_MAP, colors #rrggbb, size 0.7..1.4, known pattern/accessory.
- */
-export function sanitizeCustomization(dog, name) {
-  const d = dog && typeof dog === "object" ? dog : {};
-  const breed = CHARACTER_MAP[d.breed] ? d.breed : "shiba";
-  const def = CHARACTER_MAP[breed];
-  return {
-    breed,
-    primary: hexOr(d.primary, def.primary),
-    secondary: hexOr(d.secondary, def.secondary),
-    pattern: PATTERNS.includes(d.pattern) ? d.pattern : def.pattern,
-    size: clamp(d.size, 0.7, 1.4, 1.0),
-    collar: d.collar === null ? null : hexOr(d.collar, "#d23b3b"),
-    accessory: ACCESSORIES.includes(d.accessory) ? d.accessory : "none",
-    name,
-  };
+/** Blob color: a valid BLOB_COLORS index, else a random one. */
+export function sanitizeColor(color) {
+  const n = Number(color);
+  if (Number.isInteger(n) && n >= 0 && n < BLOB_COLORS.length) return n;
+  return Math.floor(Math.random() * BLOB_COLORS.length);
 }
 
 /** Chat text: trimmed string, capped at CHAT_MAX_LEN; '' means "ignore". */

@@ -1,41 +1,72 @@
-// ─── PAWVERSE shared movement ────────────────────────────────────────────────
+// ─── TOPPLE shared movement ──────────────────────────────────────────────────
 // The SAME integration code runs on the server (authoritative) and on the
 // client (prediction). Given the same state + input + dt, both agree.
+//
+// Platformer model: momentum on the ground, floatier steering in the air,
+// coyote time off ledges, one-way platform tops (jump up through, land on),
+// bouncy pads, ice, a soft radial world bound, and a deterministic lift back
+// to the island if you fall into the cloud sea.
 
 import {
   ACCEL,
+  AIR_ACCEL,
+  AIR_DECEL,
+  BOUNCE_VELOCITY,
+  COYOTE_TIME,
   DECEL,
   GRAVITY,
+  ICE_ACCEL,
+  ICE_DECEL,
   JUMP_VELOCITY,
   SPRINT_SPEED,
-  SWIM_SPEED,
+  TERMINAL_VY,
+  VOID_Y,
   WALK_SPEED,
-  WORLD_BOUND,
+  WORLD_RADIUS,
 } from "./constants.js";
-import { groundHeightAt, resolveObstacles, WATER_LEVEL } from "./world.js";
+import {
+  islandHeightAt,
+  landingAt,
+  P_BOUNCY,
+  P_ICE,
+  P_NORMAL,
+  SPAWN,
+  supportAt,
+} from "./tower.js";
 
-export function createMoveState(x = 0, z = 12) {
+export function createMoveState(x = SPAWN.x, z = SPAWN.z) {
   return {
     x,
-    y: 0,
+    y: islandHeightAt(x, z) ?? 0,
     z,
     vx: 0,
     vy: 0,
     vz: 0,
     yaw: 0,
     grounded: true,
-    swimming: false,
+    groundType: P_NORMAL,
+    coyote: 0, // seconds since we last stood on something
+    jumped: false, // true from takeoff until the next landing
+    jumpLatch: false, // must release jump before jumping again
   };
 }
 
 /**
- * @param s      move state (mutated): {x,y,z,vx,vy,vz,yaw,grounded,swimming}
- * @param input  {f,b,l,r, sprint, jump, yaw}  — yaw is camera yaw (rad)
+ * @param s      move state (mutated)
+ * @param input  {f,b,l,r, sprint, jump, yaw} — yaw is camera yaw (rad)
  * @param dt     seconds (server clamps to ≤ 0.1)
- * @param speedMul character preset speed multiplier
+ * @returns      { landed, impactVy, bounced, voided } — one step's events,
+ *               identical on both sides (drive effects/audio from these).
  */
-export function stepMovement(s, input, dt, speedMul = 1) {
+export function stepMovement(s, input, dt) {
   s.yaw = input.yaw;
+  const ev = {
+    landed: false,
+    impactVy: 0,
+    bounced: false,
+    voided: false,
+    jumped: false,
+  };
 
   // Desired planar direction, relative to camera yaw
   const ix = (input.r ? 1 : 0) - (input.l ? 1 : 0);
@@ -52,74 +83,121 @@ export function stepMovement(s, input, dt, speedMul = 1) {
     dz /= len;
   }
 
-  const gh = groundHeightAt(s.x, s.z);
-  s.swimming = gh < WATER_LEVEL - 0.2;
-
-  const speed =
-    (s.swimming ? SWIM_SPEED : input.sprint ? SPRINT_SPEED : WALK_SPEED) *
-    speedMul;
-  // Momentum: planar velocity chases the input direction instead of snapping.
-  // Exponential smoothing on a fixed formula — deterministic for any dt, so
-  // server replay and client prediction still agree bit-for-bit.
+  // Momentum: planar velocity chases the input direction. Rates depend on
+  // footing — ground is crisp, air keeps momentum, ice barely grips.
+  const speed = (input.sprint ? SPRINT_SPEED : WALK_SPEED) * 1;
+  const onIce = s.grounded && s.groundType === P_ICE;
+  const accel = s.grounded ? (onIce ? ICE_ACCEL : ACCEL) : AIR_ACCEL;
+  const decel = s.grounded ? (onIce ? ICE_DECEL : DECEL) : AIR_DECEL;
   const targetVx = dx * speed,
     targetVz = dz * speed;
-  const rate = dx === 0 && dz === 0 ? DECEL : ACCEL;
+  const rate = dx === 0 && dz === 0 ? decel : accel;
   const k = Math.min(1, rate * dt);
   s.vx += (targetVx - s.vx) * k;
   s.vz += (targetVz - s.vz) * k;
-  // kill sub-perceptual drift so idle dogs are exactly still
+  // kill sub-perceptual drift so idle blobs are exactly still
   if (targetVx === 0 && targetVz === 0 && Math.hypot(s.vx, s.vz) < 0.05) {
     s.vx = 0;
     s.vz = 0;
   }
 
-  if (s.swimming) {
-    // Float on the surface; gentle bob is purely client-side visual.
-    s.vy = 0;
-    s.y = WATER_LEVEL - 0.15;
+  // Jump — grounded, or shortly after walking off an edge (coyote).
+  if (!input.jump) s.jumpLatch = false;
+  if (
+    input.jump &&
+    !s.jumpLatch &&
+    (s.grounded || (s.coyote < COYOTE_TIME && !s.jumped))
+  ) {
+    s.vy = JUMP_VELOCITY;
     s.grounded = false;
-  } else {
-    if (s.grounded && input.jump) {
-      s.vy = JUMP_VELOCITY;
-      s.grounded = false;
-    }
-    s.vy += GRAVITY * dt;
+    s.jumped = true;
+    s.jumpLatch = true;
+    s.coyote = COYOTE_TIME;
+    ev.jumped = true;
+  }
+
+  // Vertical integration with one-way landing (falling only).
+  if (!s.grounded) {
+    s.coyote += dt;
+    s.vy = Math.max(TERMINAL_VY, s.vy + GRAVITY * dt);
+    const prevY = s.y;
     s.y += s.vy * dt;
-    const ghNew = groundHeightAt(s.x, s.z);
-    if (s.grounded && ghNew >= WATER_LEVEL - 0.2 && s.y - ghNew <= 0.45) {
-      // Step-snap: hug the ground on slopes instead of going micro-airborne
-      // every step downhill (keeps the run anim stable and prediction clean).
-      s.y = ghNew;
-      s.vy = 0;
-    } else if (ghNew >= WATER_LEVEL - 0.2 && s.y <= ghNew) {
-      s.y = ghNew;
-      s.vy = 0;
-      s.grounded = true;
-    } else if (s.y < ghNew) {
-      s.y = ghNew;
-      s.vy = 0;
-      s.grounded = true;
+    if (s.vy <= 0) {
+      const hit = landingAt(s.x, prevY, s.y, s.z);
+      if (hit) {
+        s.y = hit.top;
+        ev.impactVy = s.vy;
+        if (hit.type === P_BOUNCY) {
+          s.vy = BOUNCE_VELOCITY;
+          s.jumped = true;
+          ev.bounced = true;
+        } else {
+          s.vy = 0;
+          s.grounded = true;
+          s.groundType = hit.type;
+          s.jumped = false;
+          s.coyote = 0;
+          ev.landed = true;
+        }
+      }
     }
   }
 
+  // Horizontal integration.
   s.x += s.vx * dt;
   s.z += s.vz * dt;
 
-  // World bounds
-  s.x = Math.max(-WORLD_BOUND, Math.min(WORLD_BOUND, s.x));
-  s.z = Math.max(-WORLD_BOUND, Math.min(WORLD_BOUND, s.z));
+  // Grounded blobs hug their surface — and notice when it ends.
+  if (s.grounded) {
+    const sup = supportAt(s.x, s.y, s.z, 0.35);
+    if (sup) {
+      s.y = sup.top;
+      s.groundType = sup.type;
+      if (sup.type === P_BOUNCY) {
+        // standing on a pad you didn't fall onto (edge case) — pop anyway
+        s.vy = BOUNCE_VELOCITY;
+        s.grounded = false;
+        s.jumped = true;
+        ev.bounced = true;
+      }
+    } else {
+      s.grounded = false;
+      s.coyote = 0;
+      s.vy = 0;
+    }
+  }
 
-  // Solid objects: trees, benches, furniture, the yard fence. Deterministic
-  // push-out, so server and client prediction land on identical positions.
-  // (Feet height gates low props — a jumping dog vaults a bench.)
-  resolveObstacles(s, 0.35);
+  // Soft radial world bound — walk into it and it gently holds you.
+  const rad = Math.hypot(s.x, s.z);
+  if (rad > WORLD_RADIUS) {
+    const f = WORLD_RADIUS / rad;
+    s.x *= f;
+    s.z *= f;
+  }
+
+  // Fell into the cloud sea → the wind lifts you back to the island.
+  // Deterministic: keep your heading angle, land on the spawn ring.
+  if (s.y < VOID_Y) {
+    const a = Math.atan2(s.z, s.x) || 0;
+    s.x = Math.cos(a) * 9;
+    s.z = Math.sin(a) * 9;
+    s.y = islandHeightAt(s.x, s.z) ?? 0;
+    s.vx = 0;
+    s.vy = 0;
+    s.vz = 0;
+    s.grounded = true;
+    s.groundType = P_NORMAL;
+    s.jumped = false;
+    s.coyote = 0;
+    ev.voided = true;
+  }
+
+  return ev;
 }
 
-/** Derive the animation state both sides can agree on. Emotes override. */
-export function deriveAnim(s, emote) {
-  if (emote && emote !== "none") return emote; // sit | lay | wag | roll | dig | howl
-  if (s.swimming) return "swim";
-  if (!s.grounded) return "air";
+/** Derive the animation state both sides agree on. */
+export function deriveAnim(s) {
+  if (!s.grounded) return s.vy > 1 ? "rise" : "fall";
   const planar = Math.hypot(s.vx, s.vz);
   if (planar > WALK_SPEED * 1.1) return "sprint";
   if (planar > 0.2) return "run";

@@ -1,924 +1,500 @@
-// ─── PAWVERSE client entry ───────────────────────────────────────────────────
-// Boots the lobby, then runs the game: fixed-rate predicted input → server,
-// interpolated remote entities, third-person camera, effects, audio, HUD.
+// ─── TOPPLE client ───────────────────────────────────────────────────────────
+// Orchestrates everything: renderer, camera, join flow, the fixed-rate input
+// loop (prediction), remote blob interpolation, events → effects/audio/HUD.
 
 import * as THREE from "three";
-import {
-  INPUT_SEND_RATE,
-  BALL_GRAB_RANGE,
-  BITE_RANGE,
-  BALL_RADIUS,
-  CHAT_TTL_MS,
-  DAY_LENGTH_MS,
-} from "../../shared/constants.js";
-import { EVENTS } from "../../shared/protocol.js";
+import { BLOB_COLORS, INPUT_SEND_RATE } from "../../shared/constants.js";
 import { deriveAnim } from "../../shared/movement.js";
-import { groundHeightAt, isWaterAt } from "../../shared/world.js";
-import { resolveCharacter } from "../../shared/breeds.js";
-import { buildWorld } from "./world.js";
-import {
-  makeCharacter,
-  makeHuman,
-  makeRaccoon,
-  makeTextSprite,
-} from "./characterfactory.js";
-import { animateCharacter, animateHuman, animateRaccoon } from "./animator.js";
-import { Effects, PawPrints } from "./effects.js";
-import { GameAudio } from "./audio.js";
 import { Net } from "./net.js";
 import { Input } from "./input.js";
-import { Hud } from "./hud.js";
-import { initLobby } from "./lobby.js";
-import { ScentSystem } from "./living.js";
-import { beginTutorial } from "./onboarding.js";
+import { createBlob, disposeBlob } from "./blob.js";
+import { animateBlob } from "./animator.js";
+import { createTowerView } from "./tower-view.js";
+import { createEffects } from "./effects.js";
+import { GameAudio } from "./audio.js";
+import { createHud } from "./hud.js";
 
-// ── renderer / scene ─────────────────────────────────────────────────────────
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(innerWidth, innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.outputColorSpace = THREE.SRGBColorSpace;
+// ── Renderer / scene ─────────────────────────────────────────────────────────
+
+const canvas = document.getElementById("game");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap; // soft contact shadows
-renderer.toneMapping = THREE.ACESFilmicToneMapping; // filmic color response
-renderer.toneMappingExposure = 1.12;
-document.body.appendChild(renderer.domElement);
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(
-  62,
-  innerWidth / innerHeight,
+  70,
+  window.innerWidth / window.innerHeight,
   0.1,
-  400,
+  900,
 );
-addEventListener("resize", () => {
-  camera.aspect = innerWidth / innerHeight;
+
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
+  renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-const world = buildWorld(scene);
-const effects = new Effects(scene);
-const scents = new ScentSystem(scene, effects);
-const pawPrints = new PawPrints(scene);
-const audio = new GameAudio(camera);
+const towerView = createTowerView(scene);
+const effects = createEffects(scene);
+const audio = new GameAudio();
 const net = new Net();
 
-// world clock (server-synced): phase 0 sunrise → 0.25 noon → 0.5 sunset → 0.75 midnight
-let worldEpoch = null,
-  clockOffset = 0;
-function worldPhase() {
-  if (worldEpoch === null) return 0.18; // pleasant late morning pre-connect
-  const elapsed = Date.now() + clockOffset - worldEpoch;
-  return (elapsed / DAY_LENGTH_MS + 0.15) % 1; // servers boot mid-morning
-}
+// ── HUD ──────────────────────────────────────────────────────────────────────
 
-// ── game state ───────────────────────────────────────────────────────────────
-let playing = false;
-let myView = null; // my dog's 3D view
-let myCustom = null; // my customization (voice pitch, size)
-let myFacing = Math.PI; // smoothed model facing (rad)
-let myLean = 0;
-let prevMyAnim = "idle";
-let printClock = 0,
-  printSide = 1; // paw print cadence
-let wakeClock = 0,
-  reactionClock = 0;
-
-/** Bark/howl playback rate: small dogs yap high, big dogs boom low. */
-function voiceRate(size = 1) {
-  return 1.5 - 0.5 * size;
-}
-function characterSizeOf(id) {
-  if (id === net.id) return myCustom?.size ?? 1;
-  return dogViews.get(id) ? (net.dogs.get(id)?.info.c.size ?? 1) : 1;
-}
-function callSoundOf(id) {
-  const customization = id === net.id ? myCustom : net.dogs.get(id)?.info.c;
-  const species = characterSpecies(customization);
-  if (species === "cat") return "meow";
-  if (species === "raccoon") return "chitter";
-  return "bark";
-}
-function characterSpecies(customization) {
-  return resolveCharacter(customization || {}).species;
-}
-const dogViews = new Map(); // id → { view, tag, bubble?, bubbleUntil, facing, lastAnim }
-const ballMeshes = new Map(); // id → mesh
-const npcViews = new Map(); // id → human view
-const raccoonViews = new Map(); // id → raccoon view
-const tmpV = new THREE.Vector3();
-
-const hud = new Hud({
-  onChatSend: (text) => net.chat(text),
-  onAction: runHudAction,
+const hud = createHud({
+  onChat(text) {
+    net.chat(text);
+    closeChatInput();
+  },
 });
 
-function beginSniff() {
-  if (!playing || !net.connected) return;
-  const pos = { x: net.move.x, y: net.move.y, z: net.move.z };
-  scents.sniff(pos);
-  net.sniff();
-}
+// ── Blobs ────────────────────────────────────────────────────────────────────
 
-function biteNearestRunner() {
-  if (characterSpecies(myCustom) !== "dog") return;
-  const target = nearestPreyPlayer(BITE_RANGE);
-  if (target !== null) net.bite(target);
-}
+let myBlob = null;
+const remoteBlobs = new Map(); // id → blob
+let leaderId = null;
+let playing = false;
 
-function grabOrDropBall() {
-  if (net.myBall !== null) {
-    net.drop();
-    return;
+function ensureRemoteBlob(id, col) {
+  let blob = remoteBlobs.get(id);
+  if (!blob) {
+    blob = createBlob(col);
+    scene.add(blob.group);
+    remoteBlobs.set(id, blob);
   }
-  const ballId = nearestFreeBall(BALL_GRAB_RANGE);
-  if (ballId !== null) net.grab(ballId);
+  return blob;
 }
 
-function throwDirection() {
-  return [
-    Math.sin(input.yaw),
-    Math.min(0.9, Math.max(0.12, 0.45 + input.pitch)),
-    -Math.cos(input.yaw),
-  ];
+function removeRemoteBlob(id) {
+  const blob = remoteBlobs.get(id);
+  if (!blob) return;
+  scene.remove(blob.group);
+  disposeBlob(blob);
+  remoteBlobs.delete(id);
 }
 
-function quickThrow() {
-  if (net.myBall !== null) net.throw(throwDirection(), 0.75);
+function nameOf(id) {
+  if (id === net.id) return "you";
+  return net.players.get(id)?.info.n ?? "someone";
 }
 
-function toggleSound() {
-  const muted = audio.toggleMute();
-  hud.toast(muted ? "Sound muted (M)" : "Sound on");
-}
+// ── Input + chat ─────────────────────────────────────────────────────────────
 
-function openChat() {
-  if (!playing) return;
+const input = new Input(canvas, {
+  shove() {
+    net.shove();
+    audio.noiseBurst({ dur: 0.12, gain: 0.05, freq: 3000 }); // local swish
+  },
+  chatOpen() {
+    openChatInput();
+  },
+  mute() {
+    const muted = audio.toggleMute();
+    hud.toast(muted ? "🔇 muted" : "🔊 sound on");
+  },
+});
+
+function openChatInput() {
   input.enabled = false;
+  document.exitPointerLock?.();
   hud.openChat();
 }
-
-function runHudAction(action, value) {
-  if (action === "emote") {
-    net.emote(value);
-    return;
-  }
-  switch (action) {
-    case "bark":
-      net.bark();
-      break;
-    case "bite":
-      biteNearestRunner();
-      break;
-    case "grab":
-      grabOrDropBall();
-      break;
-    case "throw":
-      quickThrow();
-      break;
-    case "sniff":
-      beginSniff();
-      break;
-    case "mute":
-      toggleSound();
-      break;
-    case "journal":
-      hud.toggleJournal();
-      break;
-    case "chat":
-      openChat();
-      break;
-  }
+function closeChatInput() {
+  hud.closeChat();
+  input.enabled = true;
+  if (playing) canvas.requestPointerLock?.();
 }
-
-// ── input wiring ─────────────────────────────────────────────────────────────
-let throwArmed = false; // charging with a ball in mouth
-const input = new Input(renderer.domElement, {
-  bark: () => runHudAction("bark"),
-  bite: biteNearestRunner,
-  grabDrop: grabOrDropBall,
-  emote: (emote) => runHudAction("emote", emote),
-  mute: toggleSound,
-  sniff: () => runHudAction("sniff"),
-  journal: () => runHudAction("journal"),
-  chatOpen: openChat,
-  throwStart: () => {
-    throwArmed = net.myBall !== null;
-  },
-  throwRelease: (power) => {
-    hud.setPower(null);
-    if (!throwArmed || net.myBall === null) return;
-    throwArmed = false;
-    // Aim along the camera: yaw forward + a pitch-driven arc.
-    net.throw(throwDirection(), power);
-  },
+// hud's own Enter/Escape handling calls onChat/closeChat; re-enable input after
+document.getElementById("chatinput").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeChatInput();
 });
 
-// chat box closes → re-enable game keys
-document.getElementById("chat-input").addEventListener("blur", () => {
-  input.enabled = true;
-  hud.closeChat();
+// ── Pause overlay ────────────────────────────────────────────────────────────
+
+const pauseEl = document.getElementById("pause");
+document.getElementById("resume").addEventListener("click", () => {
+  pauseEl.classList.remove("on");
+  canvas.requestPointerLock?.();
 });
 document.addEventListener("pointerlockchange", () => {
-  if (playing)
-    hud.setPointerHint(
-      document.pointerLockElement !== renderer.domElement && !hud.chatOpen,
-    );
-});
-document.getElementById("click-to-play").addEventListener("click", () => {
-  renderer.domElement.requestPointerLock();
+  if (!playing) return;
+  const locked = document.pointerLockElement === canvas;
+  if (!locked && !hud.chatOpen) pauseEl.classList.add("on");
+  else pauseEl.classList.remove("on");
 });
 
-function nearestPreyPlayer(range) {
-  let best = null,
-    bestD2 = range * range;
-  for (const [id, rec] of dogViews) {
-    if (characterSpecies(net.dogs.get(id)?.info.c) === "dog") continue;
-    const p = rec.view.group.position;
-    const d2 = (p.x - net.move.x) ** 2 + (p.z - net.move.z) ** 2;
-    if (d2 < bestD2) {
-      bestD2 = d2;
-      best = id;
-    }
-  }
-  return best;
-}
+// ── Join overlay ─────────────────────────────────────────────────────────────
 
-function nearestFreeBall(range) {
-  let best = null,
-    bestD2 = range * range;
-  for (const [id, b] of net.balls) {
-    if (b.holder !== null) continue;
-    const d2 = (b.p[0] - net.move.x) ** 2 + (b.p[2] - net.move.z) ** 2;
-    if (d2 < bestD2) {
-      bestD2 = d2;
-      best = id;
-    }
-  }
-  return best;
-}
+const joinEl = document.getElementById("join");
+const nameEl = document.getElementById("name");
+const swatchesEl = document.getElementById("swatches");
+const playBtn = document.getElementById("play");
+const joinBestEl = document.getElementById("joinbest");
 
-// ── net events → world reactions ─────────────────────────────────────────────
-net.on("welcome", (msg) => {
-  hud.setConnection("online");
-  if (msg.settings?.epoch) {
-    worldEpoch = msg.settings.epoch;
-    clockOffset = msg.settings.now - Date.now(); // absorb client/server clock skew
-  }
-  hud.setParkEvent(msg.settings?.parkEvent || null);
-});
-net.on("disconnect", () => hud.setConnection("connection lost"));
-net.on("reconnecting", ({ attempt, delay }) => {
-  hud.setConnection(`reconnecting ${attempt} · ${Math.ceil(delay / 1000)}s`);
-});
-net.on("score", (s) => hud.setScore(s));
-net.on("park", (event) => hud.setParkEvent(event));
+const RANDOM_NAMES = [
+  "Wobbles",
+  "Boing",
+  "Sir Slips",
+  "Plop",
+  "Momo",
+  "Yeet",
+  "Gumdrop",
+  "Bloop",
+  "Tumbles",
+  "Pudding",
+  "Zoomy",
+  "Squish",
+];
+nameEl.value =
+  localStorage.getItem("topple-name") ||
+  RANDOM_NAMES[Math.floor(Math.random() * RANDOM_NAMES.length)];
 
-net.on("event", (ev) => {
-  const p = ev.p || [0, 0, 0];
-  switch (ev.kind) {
-    case EVENTS.BARK:
-      effects.ring(p, "#ffd166", 6);
-      world.react?.(p, 7);
-      audio.play(callSoundOf(ev.id), p, 1, voiceRate(characterSizeOf(ev.id)));
-      break;
-    case EVENTS.HOWL:
-      effects.ring(p, "#9ecbff", 10, 1.4);
-      audio.play("howl", p, 1, voiceRate(characterSizeOf(ev.id)));
-      break;
-    case EVENTS.ECHO:
-      // park-wide: triple expanding ring + a distant answering howl
-      effects.ring(p, "#c9d9ff", 30, 3);
-      effects.ring(p, "#8fb8ff", 20, 2.4);
-      audio.play("howl", null, 0.7, voiceRate(characterSizeOf(ev.id)) * 0.92);
-      hud.toast(
-        ev.id === net.id
-          ? "🌕 YOUR HOWL ECHOES ACROSS THE PARK! +5"
-          : "🌕 a howl echoes from Howl Rock…",
-        ev.id === net.id ? "good" : "",
-      );
-      break;
-    case EVENTS.TRICK: {
-      effects.burst(p, {
-        color: "#ffd166",
-        n: 16,
-        speed: 3,
-        up: 4.5,
-        size: 0.07,
-        ttl: 0.8,
-      });
-      effects.hearts(p, 3);
-      audio.play("chime", p);
-      if (ev.dog === net.id)
-        hud.toast("🎪 TRICK SHOW! The human loved it! +5 ⚡ +1 🦴", "good");
-      break;
-    }
-    case EVENTS.GROUP_HOWL:
-      effects.ring(p, "#c9a6ff", 16, 2);
-      if (ev.ids?.includes(net.id))
-        hud.toast("🌕 GROUP HOWL! +10 Zoomies", "good");
-      break;
-    case EVENTS.YELP:
-      audio.play("yelp", p, 0.8);
-      break;
-    case EVENTS.BITE:
-      effects.burst(p, {
-        color: "#ffe0a3",
-        n: 12,
-        speed: 2.5,
-        up: 3.5,
-        size: 0.07,
-      });
-      audio.play("growl", p, 0.9);
-      if (ev.to === net.id)
-        hud.toast(
-          `Dog bite: ${ev.life} of ${ev.maxLife} life remaining`,
-          "bad",
-        );
-      else if (ev.from === net.id)
-        hud.toast(`Hit landed: ${ev.life} of ${ev.maxLife} life remaining`);
-      break;
-    case EVENTS.CAUGHT:
-      net.respawnPlayer(ev.target, ev.respawn);
-      if (ev.target === net.id)
-        hud.toast(
-          "You were caught. Stats reset; protected for five seconds.",
-          "bad",
-        );
-      else if (ev.by === net.id)
-        hud.toast("Caught. Three hits landed.", "good");
-      break;
-    case EVENTS.PICKUP:
-      audio.play("pop", p ?? null);
-      if (ev.dog === net.id && ev.caught)
-        hud.toast("✨ MID-AIR CATCH! +5", "good");
-      break;
-    case EVENTS.THROW:
-      audio.play("whoosh", null, 0.7);
-      break;
-    case EVENTS.PET: {
-      const dogPos =
-        ev.dog === net.id
-          ? [net.move.x, net.move.y, net.move.z]
-          : dogViews.get(ev.dog)?.view.group.position.toArray();
-      if (dogPos) {
-        effects.hearts(dogPos);
-      }
-      if (ev.dog === net.id) audio.play("chime");
-      break;
-    }
-    case EVENTS.FEED:
-      if (ev.dog === net.id) hud.toast("🦴 treat! +happiness", "good");
-      break;
-    case EVENTS.SCARE:
-      effects.burst(p, {
-        color: "#ffffff",
-        n: 5,
-        speed: 1.5,
-        up: 2.5,
-        size: 0.06,
-        ttl: 0.4,
-      });
-      world.react?.(p, 10);
-      break;
-    case EVENTS.SNIFF:
-      if (ev.dog !== net.id) effects.ring(p, "#b9f6d0", 7, 1);
-      break;
-    case EVENTS.DISCOVERY:
-      scents.discover(ev.spot, p);
-      hud.recordDiscovery(ev);
-      audio.play("chime", p);
-      break;
-    case EVENTS.GREET:
-      effects.hearts(p, 2);
-      if (ev.dog === net.id)
-        hud.toast("A familiar park friend waves hello", "good");
-      break;
-    case EVENTS.PARK_COMPLETE: {
-      const participated = ev.ids?.includes(net.id);
-      hud.recordParkCompletion(ev.event, participated);
-      hud.setParkEvent(ev.event);
-      const celebrationPos = participated
-        ? [net.move.x, net.move.y, net.move.z]
-        : p;
-      effects.burst(celebrationPos, {
-        color: "#7be8a8",
-        n: 28,
-        speed: 4,
-        up: 6,
-        size: 0.08,
-        ttl: 1.1,
-      });
-      hud.toast(
-        participated
-          ? "Community goal complete: +20 Zoomies"
-          : "The park completed a community goal",
-        "good",
-      );
-      audio.play("chime");
-      break;
-    }
-    case EVENTS.CHAT: {
-      showBubble(ev.id, ev.text);
-      const isMe = ev.id === net.id;
-      const who = isMe
-        ? myCustom?.name || "You"
-        : net.dogs.get(ev.id)?.info.n || "Paw";
-      hud.addChatLine(who, ev.text, isMe);
-      break;
-    }
-    case EVENTS.CHASE:
-      effects.burst(p, {
-        color: "#c9a06a",
-        n: 14,
-        speed: 3,
-        up: 4,
-        size: 0.07,
-      });
-      audio.play("pop", p, 0.9);
-      if (ev.dog === net.id) hud.toast("Raccoon chased! +8", "good");
-      world.react?.(p, 12);
-      break;
-    case EVENTS.TREASURE: {
-      effects.burst(p, {
-        color: "#ffe28a",
-        n: 20,
-        speed: 3.5,
-        up: 5,
-        size: 0.08,
-        ttl: 0.9,
-      });
-      effects.burst(p, {
-        color: "#7a5a3c",
-        n: 10,
-        speed: 2,
-        up: 3,
-        size: 0.09,
-      });
-      audio.play("chime", p);
-      const label =
-        {
-          bone: "🦴 a bone!",
-          stick: "🪵 a great stick!",
-          shiny: "✨ something SHINY!",
-        }[ev.loot] || ev.loot;
-      if (ev.dog === net.id)
-        hud.toast(`Dug up ${label} +${ev.zoomies}`, "good");
-      // floating loot popup at the mound
-      const pop = makeTextSprite(label, {
-        bg: "rgba(255,226,138,0.92)",
-        fg: "#3a2c10",
-      });
-      pop.position.set(p[0], p[1] + 1.1, p[2]);
-      effects.add(pop, 1.6, (fx, dt2, k) => {
-        fx.obj.position.y += dt2 * 0.8;
-        fx.obj.material.opacity = 1 - k * k;
-      });
-      break;
-    }
-  }
-  hud.trackEvent?.(ev, net.id);
-});
-net.on("leaderboard", (msg) => hud.setLeaderboard(msg.top, msg.rank));
+let colorIdx = Number(localStorage.getItem("topple-color"));
+if (
+  !Number.isInteger(colorIdx) ||
+  colorIdx < 0 ||
+  colorIdx >= BLOB_COLORS.length
+)
+  colorIdx = Math.floor(Math.random() * BLOB_COLORS.length);
 
-function showBubble(dogId, text) {
-  const rec = dogId === net.id ? selfBubble : dogViews.get(dogId);
-  if (!rec) return;
-  if (rec.bubble) rec.bubbleHolder.remove(rec.bubble);
-  rec.bubble = makeTextSprite(`💬 ${text}`, {
-    bg: "rgba(255,255,255,0.92)",
-    fg: "#1a1f2e",
+BLOB_COLORS.forEach((hex, i) => {
+  const sw = document.createElement("div");
+  sw.className = "sw" + (i === colorIdx ? " sel" : "");
+  sw.style.background = hex;
+  sw.addEventListener("click", () => {
+    colorIdx = i;
+    swatchesEl
+      .querySelectorAll(".sw")
+      .forEach((el, j) => el.classList.toggle("sel", j === i));
   });
-  rec.bubble.position.y = 0.55;
-  rec.bubbleHolder.add(rec.bubble);
-  rec.bubbleUntil = performance.now() + CHAT_TTL_MS;
-}
-const selfBubble = { bubble: null, bubbleHolder: null, bubbleUntil: 0 }; // holder set on play
+  swatchesEl.append(sw);
+});
 
-function expireBubble(rec, now) {
-  if (rec.bubble && now > rec.bubbleUntil) {
-    rec.bubbleHolder.remove(rec.bubble);
-    rec.bubble = null;
-  }
-}
+let lifetimeBest = Number(localStorage.getItem("topple-best")) || 0;
+if (lifetimeBest > 0)
+  joinBestEl.textContent = `YOUR RECORD — ${Math.round(lifetimeBest)}m`;
 
-// ── entity view sync ─────────────────────────────────────────────────────────
-function syncDogViews(now, dt) {
-  // create / update remote dogs
-  for (const [id, rec] of net.dogs) {
-    let dv = dogViews.get(id);
-    if (!dv) {
-      const view = makeCharacter(rec.info.c);
-      const holder = new THREE.Group(); // tag + bubble anchor
-      holder.position.y = 1.55 * (rec.info.c.size || 1);
-      const tag = makeTextSprite(rec.info.n || "Paw");
-      holder.add(tag);
-      view.group.add(holder);
-      scene.add(view.group, view.contactShadow);
-      dv = {
-        view,
-        tag,
-        bubbleHolder: holder,
-        bubble: null,
-        bubbleUntil: 0,
-        facing: Math.PI,
-        lastAnim: "idle",
-      };
-      dogViews.set(id, dv);
-    }
-    const s = net.sample(rec.buf, now);
-    if (!s) continue;
-    dv.view.group.position.set(s.p[0], s.p[1], s.p[2]);
-    updateContactShadow(dv.view, s.p[0], s.p[1], s.p[2]);
-    const speed = s.v ? Math.hypot(s.v[0], s.v[2]) : 0;
-    const targetFacing =
-      speed > 0.5 ? Math.atan2(s.v[0], s.v[2]) : Math.PI - s.ry;
-    const before = dv.facing;
-    dv.facing = lerpAngle(dv.facing, targetFacing, Math.min(1, dt * 10));
-    dv.view.group.rotation.y = dv.facing;
-    const yawRate = dt > 0 ? shortAngle(dv.facing - before) / dt : 0;
-    dv.lean = dv.lean || 0;
-    dv.lean +=
-      (clamp(-yawRate * 0.055 * Math.min(1, speed / 5), -0.3, 0.3) - dv.lean) *
-      Math.min(1, dt * 8);
-    animateCharacter(dv.view, s.anim, dt, speed, dv.lean);
-    if (s.anim === "swim" && dv.lastAnim !== "swim") {
-      effects.burst(s.p, {
-        color: "#bfe8ff",
-        n: 10,
-        speed: 2,
-        up: 2.5,
-        size: 0.06,
-      });
-      audio.play("splash", s.p, 0.7);
-    }
-    if (dv.lastAnim === "air" && s.anim !== "air" && s.anim !== "swim") {
-      dv.view.squash = 0.3;
-      effects.burst(s.p, {
-        color: "#c9b58a",
-        n: 6,
-        speed: 1.5,
-        up: 1.4,
-        size: 0.055,
-        ttl: 0.4,
-      });
-      audio.play("thud", s.p, 0.5);
-    }
-    dv.lastAnim = s.anim;
-    // remote paw prints
-    if (speed > 1.6) {
-      dv.printClock = (dv.printClock ?? 0) - speed * dt;
-      if (dv.printClock <= 0) {
-        dv.printClock = 0.62;
-        dv.printSide = -(dv.printSide || 1);
-        pawPrints.stamp(s.p[0], s.p[1], s.p[2], dv.facing, dv.printSide);
-      }
-    }
-    expireBubble(dv, now);
+playBtn.addEventListener("click", () => {
+  const name = nameEl.value.trim().slice(0, 14) || "Blob";
+  localStorage.setItem("topple-name", name);
+  localStorage.setItem("topple-color", String(colorIdx));
+  playBtn.disabled = true;
+  playBtn.textContent = "CONNECTING…";
+  audio.ensure();
+  net.connect(name, colorIdx);
+});
+nameEl.addEventListener("keydown", (e) => {
+  e.stopPropagation();
+  if (e.key === "Enter") playBtn.click();
+});
+
+// ── Session state ────────────────────────────────────────────────────────────
+
+let sessionBest = 0;
+let milestoneMark = 0; // last flashed 100 m line
+let beatLifetime = false;
+
+net.on("welcome", () => {
+  playing = true;
+  sessionBest = 0;
+  milestoneMark = 0;
+  beatLifetime = false;
+  hud.setConnecting(false);
+  joinEl.classList.add("off");
+  hud.show();
+  // (re)build my blob
+  if (myBlob) {
+    scene.remove(myBlob.group);
+    disposeBlob(myBlob);
   }
-  // remove dogs that left interest / disconnected
-  for (const [id, dv] of dogViews) {
-    if (!net.dogs.has(id)) {
-      scene.remove(dv.view.group);
-      scene.remove(dv.view.contactShadow);
-      dogViews.delete(id);
-    }
-  }
+  myBlob = createBlob(colorIdx);
+  scene.add(myBlob.group);
+  for (const id of remoteBlobs.keys()) removeRemoteBlob(id);
+  canvas.requestPointerLock?.();
+});
+
+net.on("disconnect", () => {
+  if (playing) hud.setConnecting(true);
+});
+net.on("reconnecting", () => {
+  if (playing) hud.setConnecting(true);
+});
+net.on("playerleave", (id) => removeRemoteBlob(id));
+
+// ── Leaderboard / crown / beacon ─────────────────────────────────────────────
+
+net.on("leaderboard", (msg) => {
+  hud.setBoard(msg.live, msg.all, msg.rank, net.id, msg.leaderId);
+  towerView.setBeacon(
+    msg.leaderId !== null && msg.leaderId !== net.id ? msg.leaderPos : null,
+  );
+  leaderId = msg.leaderId;
+  if (myBlob) myBlob.crown.visible = leaderId === net.id;
+});
+
+// ── World events → effects, audio, feed ──────────────────────────────────────
+
+function nearMe(p, r = 30) {
+  if (!p) return false;
+  const m = net.move;
+  return Math.hypot(p[0] - m.x, p[1] - m.y, p[2] - m.z) < r;
 }
 
-function syncBalls(dt) {
-  for (const [id, b] of net.balls) {
-    let mesh = ballMeshes.get(id);
-    if (!mesh) {
-      mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(BALL_RADIUS, 10, 8),
-        new THREE.MeshStandardMaterial({
-          color: "#cbe54b",
-          flatShading: true,
-          roughness: 0.7,
-        }),
+net.on("event", (msg) => {
+  switch (msg.kind) {
+    case "shove": {
+      effects.ring(msg.p);
+      if (nearMe(msg.p)) audio.shove();
+      if (msg.to === net.id) hud.toast("💥 you got shoved!", "bad");
+      hud.feed(
+        `💥 <b>${escapeHtml(nameOf(msg.from))}</b> shoved <b>${escapeHtml(nameOf(msg.to))}</b>`,
       );
-      mesh.castShadow = true;
-      scene.add(mesh);
-      ballMeshes.set(id, mesh);
+      break;
     }
-    if (b.holder !== null) {
-      // Glue to the holder's mouth for lag-free carrying.
-      const holderView =
-        b.holder === net.id ? myView : dogViews.get(b.holder)?.view;
-      if (holderView) {
-        holderView.group.updateMatrixWorld();
-        holderView.mouth.getWorldPosition(tmpV);
-        mesh.position.copy(tmpV);
-        continue;
+    case "bump":
+      effects.stars(msg.p);
+      if (nearMe(msg.p)) audio.bump();
+      break;
+    case "bigfall": {
+      if (msg.id === net.id) {
+        hud.toast(`💀 −${msg.drop}m`, "bad");
       }
+      hud.feed(`💀 <b>${escapeHtml(msg.n)}</b> fell <b>${msg.drop}m</b>`);
+      break;
     }
-    // Free ball: converge on the server position, extrapolating with velocity.
-    const age = (performance.now() - b.t) / 1000;
-    tmpV.set(
-      b.p[0] + b.v[0] * age,
-      Math.max(
-        groundHeightAt(b.p[0], b.p[2]) + BALL_RADIUS * 0.8,
-        b.p[1] + b.v[1] * age,
-      ),
-      b.p[2] + b.v[2] * age,
-    );
-    mesh.position.lerp(tmpV, Math.min(1, dt * 14));
-  }
-  for (const [id, mesh] of ballMeshes) {
-    if (!net.balls.has(id)) {
-      scene.remove(mesh);
-      ballMeshes.delete(id);
+    case "voided":
+      if (msg.id !== net.id) {
+        effects.poof(msg.p);
+        hud.feed(`☁️ <b>${escapeHtml(msg.n)}</b> fell into the clouds`);
+      }
+      break;
+    case "crown": {
+      hud.feed(
+        `👑 <b>${escapeHtml(msg.n)}</b> took the crown at <b>${msg.alt}m</b>`,
+        true,
+      );
+      if (msg.id === net.id) {
+        hud.toast("👑 YOU WEAR THE CROWN", "gold");
+        audio.fanfare();
+        effects.confetti([net.move.x, net.move.y, net.move.z]);
+      }
+      break;
+    }
+    case "record": {
+      hud.feed(
+        `🏆 NEW TOWER RECORD — <b>${escapeHtml(msg.n)}</b>: <b>${msg.alt}m</b>`,
+        true,
+      );
+      if (msg.n === localStorage.getItem("topple-name")) audio.fanfare();
+      else audio.milestone();
+      break;
+    }
+    case "chat": {
+      const rec = net.players.get(msg.id);
+      if (rec) rec.chat = { text: msg.text, until: Date.now() + 4000 };
+      break;
     }
   }
+});
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
-function syncRaccoons(now, dt) {
-  for (const [id, rec] of net.raccoons) {
-    let sv = raccoonViews.get(id);
-    if (!sv) {
-      sv = makeRaccoon(id);
-      scene.add(sv.group);
-      raccoonViews.set(id, sv);
-    }
-    const s = net.sample(rec.buf, now);
-    if (!s) continue;
-    sv.group.position.set(s.p[0], s.p[1], s.p[2]);
-    sv.group.rotation.y = s.ry;
-    animateRaccoon(sv, rec.st, dt);
+// ── Camera ───────────────────────────────────────────────────────────────────
+
+const CAM_DIST = 7.4;
+let fov = 70;
+let shake = 0;
+const camTarget = new THREE.Vector3();
+const camDir = new THREE.Vector3();
+
+function updateCamera(pos, dt) {
+  camTarget.set(pos.x, pos.y + 1.15, pos.z);
+  const cp = Math.cos(input.pitch),
+    sp = Math.sin(input.pitch);
+  camDir.set(Math.sin(input.yaw) * cp, sp, -Math.cos(input.yaw) * cp);
+  camera.position.copy(camTarget).addScaledVector(camDir, -CAM_DIST);
+  // keep the camera off the island floor
+  if (camera.position.y < pos.y - 3 && pos.y < 6) camera.position.y = pos.y - 3;
+  if (shake > 0) {
+    shake = Math.max(0, shake - dt * 3);
+    camera.position.x += (Math.random() - 0.5) * shake * 0.3;
+    camera.position.y += (Math.random() - 0.5) * shake * 0.3;
   }
-  for (const [id, sv] of raccoonViews) {
-    if (!net.raccoons.has(id)) {
-      scene.remove(sv.group);
-      raccoonViews.delete(id);
-    }
-  }
-}
+  camera.lookAt(camTarget);
 
-function syncNpcs(now, dt) {
-  for (const [id, rec] of net.npcs) {
-    let nv = npcViews.get(id);
-    if (!nv) {
-      nv = makeHuman(id);
-      scene.add(nv.group);
-      npcViews.set(id, nv);
-    }
-    const s = net.sample(rec.buf, now);
-    if (!s) continue;
-    nv.group.position.set(s.p[0], s.p[1], s.p[2]);
-    nv.group.rotation.y = s.ry;
-    animateHuman(nv, rec.st, dt);
-  }
-}
-
-// ── fixed-rate input → prediction → server ───────────────────────────────────
-const INPUT_DT = 1 / INPUT_SEND_RATE;
-let inputAccum = 0;
-
-function stepInputs(dt) {
-  inputAccum += dt;
-  while (inputAccum >= INPUT_DT) {
-    inputAccum -= INPUT_DT;
-    const sample = input.sample();
-    if (sample.f || sample.b || sample.l || sample.r) net.myEmote = "none"; // mirror server rule
-    net.applyInput(sample, INPUT_DT);
-  }
-}
-
-// ── camera ───────────────────────────────────────────────────────────────────
-const BASE_FOV = 62;
-let fovKick = 0; // widens with speed for a sense of zoomies
-function updateCamera(pos, dt = 0.016) {
-  const dist = 6.2;
-  const pitch = -input.pitch; // camera elevation angle
-  const d = dist * Math.cos(pitch);
-  const cx = pos.x - Math.sin(input.yaw) * d;
-  const cz = pos.z + Math.cos(input.yaw) * d;
-  let cy = pos.y + 1.2 + dist * Math.sin(pitch);
-  cy = Math.max(groundHeightAt(cx, cz) + 0.4, cy);
-  camera.position.set(cx, cy, cz);
-  camera.lookAt(pos.x, pos.y + 0.9, pos.z);
-
-  // sprint FOV kick (smoothed)
   const speed = Math.hypot(net.move.vx, net.move.vz);
-  const target = Math.min(1, Math.max(0, (speed - 4.5) / 3.5));
-  fovKick += (target - fovKick) * Math.min(1, dt * 6);
-  const fov = BASE_FOV + fovKick * 8;
-  if (Math.abs(camera.fov - fov) > 0.05) {
-    camera.fov = fov;
-    camera.updateProjectionMatrix();
+  const fall = Math.max(0, -net.move.vy);
+  const targetFov = 70 + Math.min(16, speed * 0.55 + fall * 0.32);
+  fov += (targetFov - fov) * Math.min(1, dt * 5);
+  camera.fov = fov;
+  camera.updateProjectionMatrix();
+}
+
+// ── Fixed-rate input → prediction → local feedback ───────────────────────────
+
+const STEP = 1 / INPUT_SEND_RATE;
+let accum = 0;
+
+function pumpInput(dt) {
+  if (!playing || !net.connected) return;
+  accum += dt;
+  while (accum >= STEP) {
+    accum -= STEP;
+    const ev = net.applyInput(input.sample(), STEP);
+    const m = net.move;
+    if (ev.jumped) audio.jump();
+    if (ev.bounced) {
+      audio.bounce();
+      effects.sparkle([m.x, m.y, m.z]);
+    }
+    if (ev.landed) {
+      const impact = Math.abs(ev.impactVy);
+      audio.land(impact / 10);
+      if (impact > 4) effects.dust([m.x, m.y, m.z], Math.min(1.6, impact / 9));
+      if (myBlob) myBlob.squash = Math.min(1, impact / 15);
+      if (impact > 14) shake = Math.min(1, impact / 24);
+    }
+    if (ev.voided) {
+      audio.voided();
+      effects.poof([m.x, m.y + 0.5, m.z]);
+      hud.toast("☁️ the wind carried you home", "bad");
+    }
   }
 }
 
-// ── main loop ────────────────────────────────────────────────────────────────
-// rAF drives rendering, with a timer fallback so the simulation and the
-// server connection stay alive in throttled/background tabs (multiplayer:
-// your dog shouldn't rubber-band just because you alt-tabbed).
-let lastT = performance.now();
-let rafId = 0,
-  fallbackId = 0;
-function schedule() {
-  rafId = requestAnimationFrame(frame);
-  fallbackId = setTimeout(frame, 120);
-}
-function frame() {
-  cancelAnimationFrame(rafId);
-  clearTimeout(fallbackId);
-  const now = performance.now();
-  const dt = Math.min(0.1, (now - lastT) / 1000);
-  lastT = now;
+// ── Milestones & personal bests ──────────────────────────────────────────────
 
-  const nightK = world.update(dt, worldPhase());
-  audio.setNight?.(nightK);
-  effects.update(dt, camera);
-  pawPrints.update(dt);
+function trackProgress() {
+  const alt = net.move.y;
+  if (alt > sessionBest) sessionBest = alt;
+
+  const line = Math.floor(sessionBest / 100) * 100;
+  if (line >= 100 && line > milestoneMark) {
+    milestoneMark = line;
+    hud.milestone(line);
+    audio.milestone();
+  }
+
+  if (lifetimeBest >= 20 && !beatLifetime && alt > lifetimeBest) {
+    beatLifetime = true;
+    hud.toast("⭐ NEW PERSONAL BEST", "gold");
+    audio.chime();
+    effects.confetti([net.move.x, net.move.y, net.move.z]);
+  }
+  if (sessionBest > lifetimeBest) {
+    lifetimeBest = sessionBest;
+    localStorage.setItem("topple-best", String(Math.round(lifetimeBest)));
+  }
+}
+
+// ── Label projection ─────────────────────────────────────────────────────────
+
+const _proj = new THREE.Vector3();
+
+function projectLabels(now) {
+  const entries = [];
+  for (const [id, rec] of net.players) {
+    const s = net.sample(rec.buf, now);
+    if (!s) continue;
+    _proj.set(s.p[0], s.p[1] + 1.35, s.p[2]);
+    const dist = _proj.distanceTo(camera.position);
+    _proj.project(camera);
+    const visible =
+      _proj.z < 1 &&
+      Math.abs(_proj.x) < 1.1 &&
+      Math.abs(_proj.y) < 1.1 &&
+      dist < 65;
+    const chat =
+      rec.chat && (!rec.chat.until || rec.chat.until > Date.now())
+        ? rec.chat.text
+        : null;
+    entries.push({
+      id,
+      sx: (_proj.x * 0.5 + 0.5) * window.innerWidth,
+      sy: (-_proj.y * 0.5 + 0.5) * window.innerHeight,
+      name: rec.info.n,
+      alt: rec.alt ?? 0,
+      chat,
+      isLeader: id === leaderId,
+      visible,
+    });
+  }
+  hud.updateLabels(entries);
+}
+
+// ── Main loop ────────────────────────────────────────────────────────────────
+
+let lastT = performance.now();
+
+function frame() {
+  requestAnimationFrame(frame);
+  const now = performance.now();
+  const dt = Math.min(0.05, (now - lastT) / 1000);
+  lastT = now;
+  const t = now / 1000;
+
+  pumpInput(dt);
+
+  if (playing && net.connected) trackProgress();
+
+  // my blob
+  const pos = net.renderPos(dt);
+  if (myBlob) {
+    myBlob.group.position.set(pos.x, pos.y, pos.z);
+    myBlob.group.rotation.y = -net.move.yaw;
+    animateBlob(
+      myBlob,
+      deriveAnim(net.move),
+      Math.hypot(net.move.vx, net.move.vz),
+      net.move.vy,
+      dt,
+      t,
+    );
+  }
+
+  // remote blobs
+  for (const [id, rec] of net.players) {
+    const blob = ensureRemoteBlob(id, rec.info.col);
+    const s = net.sample(rec.buf, now);
+    if (!s) continue;
+    blob.group.position.set(s.p[0], s.p[1], s.p[2]);
+    blob.group.rotation.y = -s.ry;
+    blob.crown.visible = id === leaderId;
+    const speed = s.v ? Math.hypot(s.v[0], s.v[2]) : 0;
+    const vy = s.v ? s.v[1] : 0;
+    // remote landing dust: falling fast in the last snapshot, grounded now
+    if (blob._wasAnim === "fall" && s.anim !== "fall" && s.anim !== "rise") {
+      effects.dust(s.p, 0.7);
+      blob.squash = 0.5;
+    }
+    blob._wasAnim = s.anim;
+    animateBlob(blob, s.anim, speed, vy, dt, t);
+  }
+  // prune blobs whose players vanished from interest
+  for (const id of remoteBlobs.keys())
+    if (!net.players.has(id)) removeRemoteBlob(id);
+
+  updateCamera(pos, dt);
+  towerView.update(camera.position, pos, dt);
+  effects.update(dt);
 
   if (playing && net.connected) {
-    stepInputs(dt);
-
-    // my dog: predicted position + smoothed reconciliation offset
-    const pos = net.renderPos(dt);
-    const anim = deriveAnim(net.move, net.myEmote);
-    myView.group.position.set(pos.x, pos.y, pos.z);
-    updateContactShadow(myView, pos.x, pos.y, pos.z);
-    const speed = Math.hypot(net.move.vx, net.move.vz);
-    const targetFacing =
-      speed > 0.5 ? Math.atan2(net.move.vx, net.move.vz) : myFacing;
-    const facingBefore = myFacing;
-    myFacing = lerpAngle(myFacing, targetFacing, Math.min(1, dt * 10));
-    myView.group.rotation.y = myFacing;
-    updateAttention(myView, pos, myFacing, dt);
-    // lean into turns: roll opposite the yaw rate, scaled by speed
-    const yawRate = dt > 0 ? shortAngle(myFacing - facingBefore) / dt : 0;
-    myLean +=
-      (clamp(-yawRate * 0.055 * Math.min(1, speed / 5), -0.3, 0.3) - myLean) *
-      Math.min(1, dt * 8);
-    animateCharacter(myView, anim, dt, speed, myLean);
-    if (anim === "swim" && prevMyAnim !== "swim") {
-      effects.burst([pos.x, pos.y, pos.z], {
-        color: "#bfe8ff",
-        n: 12,
-        speed: 2.5,
-        up: 3,
-        size: 0.07,
-      });
-      audio.play("splash", null, 0.8);
-    }
-    // landing: squash + dust + thud
-    if (prevMyAnim === "air" && anim !== "air" && anim !== "swim") {
-      myView.squash = 0.3;
-      effects.burst([pos.x, pos.y, pos.z], {
-        color: "#c9b58a",
-        n: 8,
-        speed: 1.8,
-        up: 1.6,
-        size: 0.06,
-        ttl: 0.45,
-      });
-      audio.play("thud", null, 0.7, voiceRate(myCustom?.size ?? 1) * 0.9);
-    }
-    prevMyAnim = anim;
-    // paw print trail while running on solid ground
-    if (net.move.grounded && speed > 1.6) {
-      printClock -= speed * dt;
-      if (printClock <= 0) {
-        printClock = 0.62; // metres between stamps
-        printSide = -printSide;
-        pawPrints.stamp(pos.x, pos.y, pos.z, myFacing, printSide);
-      }
-    }
-    if (anim === "swim") {
-      wakeClock -= dt;
-      if (wakeClock <= 0) {
-        wakeClock = 0.45;
-        effects.ring([pos.x, pos.y, pos.z], "#d9f4ff", 1.8, 0.75);
-      }
-    }
-    reactionClock -= dt;
-    if (speed > 6 && reactionClock <= 0) {
-      reactionClock = 0.8;
-      world.react?.([pos.x, pos.y, pos.z], 4.5);
-    }
-    expireBubble(selfBubble, now);
-
-    if (input.charging && throwArmed) hud.setPower(input.chargePower());
-
-    syncDogViews(now, dt);
-    syncBalls(dt);
-    syncNpcs(now, dt);
-    syncRaccoons(now, dt);
-    world.updateDigs(net.digs);
-    scents.update(pos, now);
-    hud.updateLiving(Date.now());
-    updateCamera(pos, dt);
-    audio.setSeaProximity(pos.x);
-    hud.drawMinimap?.(net, pos);
-    if (anim === "swim") hud.trackLocal?.("swim");
+    hud.setAltitude(net.move.y, Math.max(lifetimeBest, sessionBest));
+    projectLabels(now);
+    audio.update({
+      alt: Math.max(0, net.move.y),
+      speed: Math.hypot(net.move.vx, net.move.vz),
+      vy: net.move.vy,
+    });
   }
 
   renderer.render(scene, camera);
-  schedule();
 }
 frame();
-
-// ── boot ─────────────────────────────────────────────────────────────────────
-initLobby({
-  onPlay(name, customization) {
-    playing = true;
-    input.enabled = false;
-    myCustom = { ...customization, name };
-    hud.show();
-    hud.setIdentity(
-      name || "Paw",
-      customization.primary || "#e9c67a",
-      characterSpecies(customization),
-    );
-    audio.init(scene); // the Play click satisfies autoplay policy
-
-    myView = makeCharacter({ ...customization, name });
-    scene.add(myView.group, myView.contactShadow);
-    net.speedMul = myView.preset.speed;
-    const holder = new THREE.Group();
-    holder.position.y = 1.55 * (customization.size || 1);
-    holder.add(
-      makeTextSprite(name || "Paw", {
-        bg: "rgba(110,231,160,0.85)",
-        fg: "#0c2214",
-      }),
-    );
-    myView.group.add(holder);
-    selfBubble.bubbleHolder = holder;
-
-    const discoveries = hud.getDiscoveryIds();
-    scents.setDiscovered(discoveries);
-    beginTutorial(characterSpecies(customization), () => {
-      net.connect(name, customization, discoveries);
-      input.enabled = true;
-      renderer.domElement.requestPointerLock();
-    });
-  },
-});
-
-// Dev-only debug handle (harmless in prod builds, tree-shaken by the guard).
-if (import.meta.env.DEV) window.__paw = { net, input };
-
-function lerpAngle(a, b, k) {
-  return a + shortAngle(b - a) * k;
-}
-function shortAngle(d) {
-  while (d > Math.PI) d -= Math.PI * 2;
-  while (d < -Math.PI) d += Math.PI * 2;
-  return d;
-}
-function clamp(v, lo, hi) {
-  return Math.min(hi, Math.max(lo, v));
-}
-
-function updateAttention(view, pos, facing, dt) {
-  let target = null;
-  let bestD2 = 12 * 12;
-  const consider = (x, y, z) => {
-    const d2 = (x - pos.x) ** 2 + (z - pos.z) ** 2;
-    if (d2 >= bestD2) return;
-    bestD2 = d2;
-    target = { x, y, z };
-  };
-  for (const rec of net.raccoons.values()) {
-    const sample = rec.buf[rec.buf.length - 1];
-    if (sample) consider(sample.p[0], sample.p[1], sample.p[2]);
-  }
-  for (const rec of net.dogs.values()) {
-    const sample = rec.buf[rec.buf.length - 1];
-    if (sample) consider(sample.p[0], sample.p[1] + 0.6, sample.p[2]);
-  }
-  const desiredYaw = target
-    ? clamp(
-        shortAngle(Math.atan2(target.x - pos.x, target.z - pos.z) - facing),
-        -0.65,
-        0.65,
-      )
-    : 0;
-  const desiredPitch = target
-    ? clamp(
-        -Math.atan2(target.y - pos.y - 0.5, Math.sqrt(bestD2)) * 0.35,
-        -0.2,
-        0.2,
-      )
-    : 0;
-  view.lookYaw =
-    (view.lookYaw || 0) +
-    (desiredYaw - (view.lookYaw || 0)) * Math.min(1, dt * 4);
-  view.lookPitch =
-    (view.lookPitch || 0) +
-    (desiredPitch - (view.lookPitch || 0)) * Math.min(1, dt * 4);
-}
-
-function updateContactShadow(view, x, y, z) {
-  const shadow = view.contactShadow;
-  if (!shadow) return;
-  shadow.visible = !isWaterAt(x, z);
-  const groundY = groundHeightAt(x, z);
-  const scale = 1 - Math.min(0.75, Math.max(0, y - groundY) * 0.18);
-  shadow.position.set(x, groundY + 0.018, z);
-  shadow.scale.set(0.72 * scale, 1.05 * scale, 1);
-}

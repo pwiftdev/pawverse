@@ -1,180 +1,246 @@
-// ─── Visual effects ──────────────────────────────────────────────────────────
-// Short-lived, self-cleaning bits of juice: bark ripples, tussle bursts,
-// pet hearts, splashes, dig dust. All simple meshes — cheap and cheerful.
+// ─── Effects ─────────────────────────────────────────────────────────────────
+// Pooled sprite particles: landing dust, bump stars, shove rings, confetti,
+// cloud poofs. Everything is generated (canvas textures), nothing loaded.
 
-import * as THREE from 'three';
+import * as THREE from "three";
 
-export class Effects {
-  constructor(scene) {
-    this.scene = scene;
-    this.live = [];   // { obj, ttl, age, tick(fx, dt) }
-  }
+const POOL = 240;
 
-  add(obj, ttl, tick) {
-    this.scene.add(obj);
-    this.live.push({ obj, ttl, age: 0, tick });
-  }
-
-  /** Expanding bark/howl ring at pos. */
-  ring(pos, color = '#ffd166', maxR = 6, ttl = 0.7) {
-    const geo = new THREE.RingGeometry(0.9, 1.0, 32);
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, side: THREE.DoubleSide, depthWrite: false });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(pos[0], pos[1] + 0.25, pos[2]);
-    this.add(mesh, ttl, (fx, dt, k) => {
-      const s = 1 + k * maxR;
-      fx.obj.scale.set(s, s, 1);
-      fx.obj.material.opacity = 1 - k;
-    });
-  }
-
-  /** Particle burst (tussle stars, dig dust, splash droplets). */
-  burst(pos, { color = '#ffffff', n = 10, speed = 3, up = 3, size = 0.09, ttl = 0.6, gravity = -9 } = {}) {
-    const geo = new THREE.SphereGeometry(size, 4, 3);
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true });
-    const mesh = new THREE.InstancedMesh(geo, mat, n);
-    const parts = [];
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const sp = speed * (0.4 + Math.random() * 0.6);
-      parts.push({
-        x: pos[0], y: pos[1] + 0.3, z: pos[2],
-        vx: Math.cos(a) * sp, vy: up * (0.5 + Math.random()), vz: Math.sin(a) * sp,
-      });
-    }
-    const dummy = new THREE.Object3D();
-    this.add(mesh, ttl, (fx, dt, k) => {
-      for (let i = 0; i < n; i++) {
-        const p = parts[i];
-        p.vy += gravity * dt;
-        p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
-        dummy.position.set(p.x, Math.max(0.05, p.y), p.z);
-        dummy.scale.setScalar(1 - k * 0.7);
-        dummy.updateMatrix();
-        mesh.setMatrixAt(i, dummy.matrix);
-      }
-      mesh.instanceMatrix.needsUpdate = true;
-      mat.opacity = 1 - k * k;
-    });
-  }
-
-  /** Floating hearts when an NPC pets a dog. */
-  hearts(pos, n = 4) {
-    for (let i = 0; i < n; i++) {
-      const heart = makeHeart();
-      heart.position.set(pos[0] + (Math.random() - 0.5), pos[1] + 0.8, pos[2] + (Math.random() - 0.5));
-      const drift = (Math.random() - 0.5) * 0.6;
-      this.add(heart, 1.4 + Math.random() * 0.4, (fx, dt, k) => {
-        fx.obj.position.y += dt * 1.1;
-        fx.obj.position.x += drift * dt;
-        fx.obj.rotation.y += dt * 3;
-        fx.obj.material.opacity = 1 - k * k;
-      });
-    }
-  }
-
-  update(dt, camera) {
-    for (let i = this.live.length - 1; i >= 0; i--) {
-      const fx = this.live[i];
-      fx.age += dt;
-      const k = Math.min(1, fx.age / fx.ttl);
-      fx.tick(fx, dt, k);
-      if (fx.age >= fx.ttl) {
-        this.scene.remove(fx.obj);
-        fx.obj.geometry?.dispose();
-        fx.obj.material?.dispose();
-        this.live.splice(i, 1);
-      }
-    }
-  }
+function discTexture(soft = true) {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(32, 32, 2, 32, 32, 30);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(soft ? 0.5 : 0.85, "rgba(255,255,255,0.6)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
 }
 
-// ─── Paw print trails ────────────────────────────────────────────────────────
-// Ring buffer of instanced decals stamped under running dogs, fading out.
+function starTexture() {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d");
+  g.translate(32, 32);
+  g.fillStyle = "#fff";
+  g.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const r = i % 2 === 0 ? 26 : 11;
+    const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
+    g[i === 0 ? "moveTo" : "lineTo"](Math.cos(a) * r, Math.sin(a) * r);
+  }
+  g.closePath();
+  g.fill();
+  return new THREE.CanvasTexture(c);
+}
 
-const PRINT_MAX = 96;
-const PRINT_TTL = 7;
-
-export class PawPrints {
-  constructor(scene) {
-    this.mesh = new THREE.InstancedMesh(
-      new THREE.PlaneGeometry(0.22, 0.28),
-      new THREE.MeshBasicMaterial({
-        map: pawTexture(), transparent: true, depthWrite: false,
-        color: '#3a3026', opacity: 0.55,
+export function createEffects(scene) {
+  const softTex = discTexture(true);
+  const starTex = starTexture();
+  const pool = [];
+  for (let i = 0; i < POOL; i++) {
+    const s = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: softTex,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
       }),
-      PRINT_MAX);
-    this.mesh.frustumCulled = false;
-    this.mesh.renderOrder = 1;
-    scene.add(this.mesh);
-    this.slots = new Array(PRINT_MAX).fill(null);   // {age} | null
-    this.next = 0;
-    this.dummy = new THREE.Object3D();
-    // park all instances out of sight
-    this.dummy.position.set(0, -50, 0);
-    this.dummy.updateMatrix();
-    for (let i = 0; i < PRINT_MAX; i++) this.mesh.setMatrixAt(i, this.dummy.matrix);
+    );
+    s.visible = false;
+    scene.add(s);
+    pool.push({
+      sprite: s,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      life: 0,
+      ttl: 1,
+      size: 1,
+      grow: 0,
+      gravity: 0,
+      spin: 0,
+    });
+  }
+  let cursor = 0;
+
+  function spawn({
+    x,
+    y,
+    z,
+    vx = 0,
+    vy = 0,
+    vz = 0,
+    color = 0xffffff,
+    size = 0.4,
+    ttl = 0.7,
+    grow = 0,
+    gravity = 0,
+    star = false,
+    opacity = 0.9,
+  }) {
+    const p = pool[cursor];
+    cursor = (cursor + 1) % POOL;
+    p.sprite.material.map = star ? starTex : softTex;
+    p.sprite.material.color.setHex(color);
+    p.sprite.material.opacity = opacity;
+    p.sprite.position.set(x, y, z);
+    p.sprite.scale.setScalar(size);
+    p.sprite.visible = true;
+    p.vx = vx;
+    p.vy = vy;
+    p.vz = vz;
+    p.life = 0;
+    p.ttl = ttl;
+    p.size = size;
+    p.grow = grow;
+    p.gravity = gravity;
+    p.baseOpacity = opacity;
   }
 
-  /** Stamp one print flat on the ground, nudged left/right of the path. */
-  stamp(x, y, z, facing, side) {
-    const i = this.next;
-    this.next = (this.next + 1) % PRINT_MAX;
-    this.slots[i] = { age: 0, i };
-    const d = this.dummy;
-    d.position.set(
-      x + Math.cos(facing) * side * 0.14,
-      y + 0.02,
-      z - Math.sin(facing) * side * 0.14);
-    d.rotation.set(-Math.PI / 2, 0, -facing);
-    d.scale.setScalar(1);
-    d.updateMatrix();
-    this.mesh.setMatrixAt(i, d.matrix);
-    this.mesh.instanceMatrix.needsUpdate = true;
-  }
-
-  update(dt) {
-    let dirty = false;
-    for (let i = 0; i < PRINT_MAX; i++) {
-      const s = this.slots[i];
-      if (!s) continue;
-      s.age += dt;
-      if (s.age >= PRINT_TTL) {
-        this.slots[i] = null;
-        this.dummy.position.set(0, -50, 0);
-        this.dummy.scale.setScalar(0.001);
-        this.dummy.updateMatrix();
-        this.mesh.setMatrixAt(i, this.dummy.matrix);
-        dirty = true;
+  return {
+    /** Landing dust puff; strength scales with impact. */
+    dust(p, strength = 1) {
+      const n = Math.min(14, 5 + Math.round(strength * 5));
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 1 + Math.random() * 1.6 * strength;
+        spawn({
+          x: p[0],
+          y: p[1] + 0.08,
+          z: p[2],
+          vx: Math.cos(a) * sp,
+          vy: 0.4 + Math.random() * 0.7,
+          vz: Math.sin(a) * sp,
+          color: 0xe8e2d8,
+          size: 0.28 + Math.random() * 0.3 * strength,
+          ttl: 0.5 + Math.random() * 0.3,
+          grow: 1.6,
+          opacity: 0.55,
+        });
       }
-    }
-    if (dirty) this.mesh.instanceMatrix.needsUpdate = true;
-  }
-}
+    },
 
-function pawTexture() {
-  const cv = document.createElement('canvas');
-  cv.width = cv.height = 64;
-  const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#fff';
-  const pad = (x, y, rx, ry) => {
-    ctx.beginPath();
-    ctx.ellipse(x, y, rx, ry, 0, 0, 7);
-    ctx.fill();
+    /** Cartoon bump stars. */
+    stars(p) {
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + Math.random() * 0.5;
+        spawn({
+          x: p[0],
+          y: p[1] + 0.5,
+          z: p[2],
+          vx: Math.cos(a) * 2.2,
+          vy: 1.6 + Math.random(),
+          vz: Math.sin(a) * 2.2,
+          color: 0xffe066,
+          size: 0.22,
+          ttl: 0.55,
+          gravity: -4,
+          star: true,
+        });
+      }
+    },
+
+    /** Shove impact ring burst. */
+    ring(p, color = 0x48dbfb) {
+      for (let i = 0; i < 10; i++) {
+        const a = (i / 10) * Math.PI * 2;
+        spawn({
+          x: p[0],
+          y: p[1] + 0.4,
+          z: p[2],
+          vx: Math.cos(a) * 4.5,
+          vy: 0.3,
+          vz: Math.sin(a) * 4.5,
+          color,
+          size: 0.3,
+          ttl: 0.4,
+          opacity: 0.8,
+        });
+      }
+    },
+
+    /** Celebration confetti (records, crowns, personal bests). */
+    confetti(p) {
+      const colors = [
+        0xff6b6b, 0xfeca57, 0x48dbfb, 0x7bed9f, 0xa29bfe, 0xfd79a8,
+      ];
+      for (let i = 0; i < 34; i++) {
+        const a = Math.random() * Math.PI * 2;
+        spawn({
+          x: p[0],
+          y: p[1] + 0.6,
+          z: p[2],
+          vx: Math.cos(a) * (1 + Math.random() * 3),
+          vy: 3.5 + Math.random() * 4,
+          vz: Math.sin(a) * (1 + Math.random() * 3),
+          color: colors[i % colors.length],
+          size: 0.14 + Math.random() * 0.1,
+          ttl: 1.3 + Math.random() * 0.5,
+          gravity: -7,
+          opacity: 1,
+        });
+      }
+    },
+
+    /** Big soft poof (falling into the cloud sea). */
+    poof(p) {
+      for (let i = 0; i < 16; i++) {
+        const a = Math.random() * Math.PI * 2;
+        spawn({
+          x: p[0] + Math.cos(a) * 0.5,
+          y: p[1],
+          z: p[2] + Math.sin(a) * 0.5,
+          vx: Math.cos(a) * 1.4,
+          vy: 1 + Math.random() * 1.4,
+          vz: Math.sin(a) * 1.4,
+          color: 0xffffff,
+          size: 0.7 + Math.random() * 0.6,
+          ttl: 0.9,
+          grow: 1.8,
+          opacity: 0.8,
+        });
+      }
+    },
+
+    /** Bounce-pad sparkle. */
+    sparkle(p) {
+      for (let i = 0; i < 8; i++) {
+        const a = Math.random() * Math.PI * 2;
+        spawn({
+          x: p[0],
+          y: p[1] + 0.1,
+          z: p[2],
+          vx: Math.cos(a) * 1.6,
+          vy: 3 + Math.random() * 2,
+          vz: Math.sin(a) * 1.6,
+          color: 0xff9ae5,
+          size: 0.2,
+          ttl: 0.6,
+          gravity: -5,
+          star: true,
+        });
+      }
+    },
+
+    update(dt) {
+      for (const p of pool) {
+        if (!p.sprite.visible) continue;
+        p.life += dt;
+        if (p.life >= p.ttl) {
+          p.sprite.visible = false;
+          continue;
+        }
+        p.vy += p.gravity * dt;
+        p.sprite.position.x += p.vx * dt;
+        p.sprite.position.y += p.vy * dt;
+        p.sprite.position.z += p.vz * dt;
+        const k = p.life / p.ttl;
+        p.sprite.material.opacity = p.baseOpacity * (1 - k);
+        p.sprite.scale.setScalar(p.size * (1 + p.grow * k));
+      }
+    },
   };
-  pad(32, 42, 13, 11);                 // main pad
-  pad(14, 24, 6, 8); pad(28, 16, 6, 8); pad(42, 17, 6, 8); pad(52, 27, 5, 7);  // toes
-  const tex = new THREE.CanvasTexture(cv);
-  return tex;
-}
-
-function makeHeart() {
-  const shape = new THREE.Shape();
-  shape.moveTo(0, -0.12);
-  shape.bezierCurveTo(-0.22, 0.08, -0.1, 0.22, 0, 0.1);
-  shape.bezierCurveTo(0.1, 0.22, 0.22, 0.08, 0, -0.12);
-  const geo = new THREE.ShapeGeometry(shape);
-  const mat = new THREE.MeshBasicMaterial({ color: '#ff6b8a', transparent: true, side: THREE.DoubleSide, depthWrite: false });
-  return new THREE.Mesh(geo, mat);
 }

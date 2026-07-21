@@ -1,9 +1,23 @@
-# 🐕 PAWVERSE
+# 👑 TOPPLE
 
-An open-world multiplayer animal simulator on Solana. Run around a stylized park as a
-custom dog, cat, or raccoon, fetch balls, call to NPC humans, sit for pets, chase raccoons, dig up
-buried treasure, howl with the pack — all synced in real time, with wallet-based
-identity and premium cosmetics.
+**An endless multiplayer climb. One tower, no rounds, no lobbies — the highest
+blob wears the crown.**
+
+Drop into a live, persistent tower at any moment as a squishy googly-eyed blob.
+Your altitude is your score, ticking live above your head. Climb the platform
+helix from the meadow through the cloud layer, the sunset band, the dusk
+crystals, and into space. Bump and shove other blobs off ledges, ride bouncy
+pads, slide across ice — and when you fall (you will fall), everyone hears
+about it.
+
+- **No rounds, no lobbies** — the world never resets; you join mid-chaos and
+  the screen explains itself: higher = winning.
+- **The crown** — the current highest blob wears a crown and casts a golden
+  beacon visible across the whole tower. Go take it.
+- **Falls are content** — big falls are broadcast (`💀 Wobbles fell 214m`),
+  landings squash, the cloud sea catches anyone who drops off the island.
+- **Highscores, not matches** — live "highest now" board plus a persistent
+  all-time top-10; new tower records are announced to everyone.
 
 ## Quick start
 
@@ -15,164 +29,108 @@ npm run dev
 - Game client → http://localhost:5173
 - Authoritative server → http://localhost:8080 (`/api/health`, WS at `/ws`)
 
-Open **two browser tabs** to see real-time multiplayer: move, fetch, bark, bite,
-and chat — each tab sees the other player live.
+Open **two browser tabs** to see real-time multiplayer: climb, bump, shove and
+chat — each tab sees the other blob live.
 
-No wallet, no NFTs, no external assets required. Everything (characters, world, audio)
-is generated procedurally at runtime.
+No accounts, no assets — characters, tower, sky, and audio are all generated
+procedurally at runtime.
 
 ## Controls
 
-| Input                  | Action                                                           |
-| ---------------------- | ---------------------------------------------------------------- |
-| Click canvas           | Pointer lock / mouse-look                                        |
-| WASD                   | Move (relative to camera)                                        |
-| Shift                  | Sprint                                                           |
-| Space                  | Jump (real arc physics)                                          |
-| B                      | Call (3D positional sound + ripple, scares NPCs, 1.5 s cooldown) |
-| F                      | Dog bite nearest player cat/raccoon                              |
-| C                      | Sit (near an NPC → they pet & feed you)                          |
-| X / V / R / G / H      | Lay down / wag tail / roll over / dig / howl                     |
-| M                      | Mute / unmute sound                                              |
-| N                      | Sniff for scent trails and nearby discoveries                    |
-| J                      | Open the persistent Trail Journal                                |
-| E                      | Grab / drop ball                                                 |
-| Hold LMB or Q, release | Aim & charge-throw ball (power bar)                              |
-| Enter                  | Chat bubble                                                      |
-| Swim                   | Just walk into the sea or the fountain                           |
+| Input        | Action                                       |
+| ------------ | -------------------------------------------- |
+| Click canvas | Pointer lock / mouse-look                    |
+| WASD         | Move (relative to camera)                    |
+| Shift        | Sprint                                       |
+| Space        | Jump (coyote time + edge grace, no auto-hop) |
+| F            | Shove the blob in front of you (1.5 s cd)    |
+| Enter        | Chat bubble                                  |
+| M            | Mute / unmute                                |
 
 ## Game systems
 
-- **Terrain** — real highground: rolling lawns plus two landmark hills (Sunset
-  Hill in the south with the Howl Rock stone circle on its summit, and the
-  North Meadow rise), rock-shaded steep faces, all masked flat around gameplay
-  areas. The height field is shared code, so the server simulates exactly the
-  slopes you see.
-- **Day/night cycle** — a full day every 8 minutes, synced from the server
-  clock: the sun arcs over the sea, sunsets tint the sky and water, then stars,
-  a cratered moon, glowing lamp posts, fireflies, and cricket song take over
-  (birdsong and butterflies by day).
-- **Living Park** — rotating community events ask everyone in the park to fetch,
-  howl, dig, chase, or perform tricks together. Contributors share a completion
-  reward, while wind, wildlife, foliage, petals, and water wakes react to play.
-- **Sniff exploration** — scent pulses reveal trails leading to eight
-  server-validated landmarks and vistas. Discoveries persist in the local Trail
-  Journal alongside earned XP, explorer levels, goals, and completed park events.
-- **NPC memory and routines** — joggers, walkers, trainers, and picnickers move
-  at different rhythms. Humans remember players that treated them well or scared
-  them and greet familiar friendly characters on later encounters.
-- **Howl Rock** — howl from the summit stone circle and your howl echoes across
-  the whole park (+5 Zoomies, park-wide event, 60 s cooldown).
-- **Trick shows** — perform 3 _different_ emotes within 6 s while a human is
-  within 8 m: applause, +5 Zoomies, +1 treat, +rep.
-- **Movement feel** — momentum-based acceleration (deterministic, shared with
-  prediction), a bounding gallop at sprint, lean into turns, landing
-  squash-and-stretch with dust + thud, fading paw print trails, water wakes,
-  reactive ears, and attention tracking toward nearby animals.
-
-- **Fetch** — balls spawn on colored pads. Grab (+2 Zoomies), catch mid-air (+5),
-  return to a pad (+10). Throw with charged aim. Balls bounce off trees and
-  furniture with real reflection physics.
-- **Social** — sit/lay/wag near an NPC human and they'll walk over, pet you, and
-  feed you treats (+happiness, +treats, +rep). Bark at or bite near them and they
-  flee (−rep). Reputation meter runs **Good Boy ↔ Menace**.
-- **Dog chase PvP** — player cats and raccoons can flee from player dogs. Three
-  server-validated dog bites catch a runner, respawn them at the park entrance,
-  reset their session stats, and grant five seconds of spawn protection.
-- **Raccoons** — 7 of them forage under the trees. Get close and they freeze,
-  then bolt. Tag one mid-flee (+8 Zoomies) and it escapes up a tree, reappearing
-  elsewhere later.
-- **Buried treasure** — sparkling dirt mounds hide loot. Dig (G) on one for a
-  couple of seconds to unearth a bone (+10), a great stick (+15), or something
-  shiny (+30). Mounds refill on a 45 s cooldown.
-- **Group howl** — two or more dogs howling near each other within 3 s each get
-  +10 Zoomies and a synced chorus.
-- **Collisions** — trees, benches, treat stands, the dog house, and the yard
-  fence are all solid, resolved by the same shared code on server and client so
-  prediction never fights the server. Benches are low: jump over them. The yard
-  fence isn't: use the gate.
-- **Leaderboard & goals** — live Top Paws board (by Zoomies) broadcast every 3 s,
-  plus a "Pup Goals" checklist (bark, fetch, mid-air catch, get petted, swim,
-  group howl, raccoon chase, treasure dig) tracked on the HUD.
+- **The tower** — a deterministic platform helix generated from a fixed seed at
+  module load, identical on server and client. Every consecutive hop is
+  verified against the jump envelope (max rise 1.6 m vs. a 1.76 m apex, capped
+  edge gaps), so nothing is ever unreachable — the test suite asserts this for
+  all ~4,900 platforms up to the 5,000 m Summit flag.
+- **Platform types** — normal, **bouncy pads** (launch you upward; pads that
+  would be shadowed by an overhang are demoted at generation), **ice** (barely
+  any grip, appears above 250 m), and big **rest rings** every ~60 m.
+- **Altitude zones** — sky, fog, lighting, platform palette, and the ambient
+  music chord all shift with height: meadow → cloud layer → sunset → dusk
+  crystals → space (stars fade in past ~450 m) → deep space gold.
+- **Movement feel** — momentum on the ground, floatier air steering, coyote
+  time off ledges, one-way platforms (jump up through, land on top),
+  squash-and-stretch landings with dust, camera FOV kick and screen shake on
+  hard impacts, a fall whistle when you're really plummeting.
+- **Blob vs blob** — server-authoritative body bumps with comedic restitution
+  and an aimed **shove** (cone check, lift, recoil, cooldown). The island base
+  below 4 m is a truce zone so spawns can't be bullied.
+- **Fall drama** — the server tracks each blob's high-water mark; landing 25 m+
+  below it emits a local fall event, 60 m+ is broadcast tower-wide. Falling
+  into the cloud sea poofs you back to the island.
+- **Crown & beacon** — leaderboard every 2 s picks the live leader (above
+  20 m); crown changes are announced, and the leader's position carries a
+  golden light beam everyone can navigate by.
+- **Highscores** — per-run session best feeds a persistent all-time top-10
+  (JSON on disk, best-effort), deduped by name; only a new #1 is announced as
+  a tower record. Personal lifetime best also persists in the browser.
 - **Multiplayer** — authoritative Node server at 30 Hz, 15 Hz snapshots with
-  interest management (70 m radius culling, 50+ dogs per zone), client-side
-  prediction + server reconciliation for your own dog, 150 ms interpolation for
-  everyone else.
-- **Customization** — a full creator screen with species tabs and 17 presets:
-  10 dog breeds (including a deterministic Mutt mixer), 4 cats, and 3 raccoons,
-  plus coat palettes, custom colors,
-  patterns, size, collar colors, accessories, drag-to-rotate preview with poses,
-  and a one-click randomizer. Saved to localStorage, and to your wallet address
-  when connected.
-- **HUD** — minimap with live positions of players and ambient raccoons, leaderboard,
-  objectives, rotating park-event progress, mood needs, persistent Trail Journal,
-  clickable emote bar, toasts, and chat bubbles.
-
-## Solana
-
-- **Connect Wallet** supports Phantom / Backpack / any injected `window.solana`
-  provider via `@solana/web3.js` (no auto-approvals — every transaction requires
-  explicit wallet confirmation; the stub mint flow only _signs_ when you click).
-- Wallet address = persistent character identity (loadout saved per address).
-- **Premium gate** — set `VITE_PREMIUM_MINT` to an SPL token mint; holders unlock
-  premium breeds (Doberman, Poodle, Pug). Unset = everything unlocked.
-- **Character NFT skins** — `fetchCharacterNfts()` is a clean mock that works with
-  zero NFTs) with the Metaplex/indexer extension point marked in the code.
-- **`mintCharacter()`** — devnet stub that builds a transaction embedding your character's
-  metadata and asks the wallet to sign. Clearly commented as the future mint.
+  3D interest management (80 m radius culling — height separation culls too),
+  client-side prediction + server reconciliation for your own blob (bumps and
+  shoves arrive as smoothed corrections), 150 ms interpolation for everyone
+  else.
+- **HUD** — big live altitude readout with progress-to-best bar, live top-5 +
+  all-time board with your rank, event feed, milestone flashes every 100 m,
+  toasts, projected name/altitude labels with chat bubbles, and a
+  drop-in-3-seconds join screen (name + colour, nothing else).
 
 ## Configuration
 
-Copy `.env.example` to `.env` (server) and set `VITE_*` vars for the client:
+Set `VITE_*` vars for the client at build time:
 
-| Var                   | Purpose                                                   |
-| --------------------- | --------------------------------------------------------- |
-| `PORT`                | Server port (default 8080)                                |
-| `ALLOWED_ORIGINS`     | Comma-separated browser origins allowed on `/ws`          |
-| `VITE_SOLANA_NETWORK` | `devnet` (default), `testnet`, `mainnet-beta`             |
-| `VITE_SOLANA_RPC`     | RPC endpoint (default public devnet)                      |
-| `VITE_PREMIUM_MINT`   | SPL mint that unlocks premium content (empty = off)       |
-| `VITE_WS_URL`         | Override WS endpoint, e.g. `wss://your-server.fly.dev/ws` |
+| Var               | Purpose                                                   |
+| ----------------- | --------------------------------------------------------- |
+| `PORT`            | Server port (default 8080)                                |
+| `ALLOWED_ORIGINS` | Comma-separated browser origins allowed on `/ws`          |
+| `VITE_WS_URL`     | Override WS endpoint, e.g. `wss://your-server.fly.dev/ws` |
 
 ## Architecture
 
 ```
 /client   Vite + three.js (vanilla ESM, no React)
   src/net.js         WS client, prediction ring buffer, reconciliation, interpolation
-  src/characterfactory.js  procedural low-poly characters/humans/raccoons
-  src/animator.js    procedural gait/pose animation (no rigs, no assets)
-  src/world.js       park visuals rendered FROM shared/world.js data (sky/water
-                     shaders, terrain, trees, props, dig mounds, ambient life)
-  src/effects.js     rings, bursts, hearts, loot popups
-  src/audio.js       100% procedural WebAudio (barks, howls, birds, sea)
-  src/hud.js         scorecards, minimap, leaderboard, goals, emote bar
-  src/lobby.js       character creator (tabs, palettes, poses, randomizer)
-  src/solana.js      wallet connect, premium gate, NFT mock, mint stub
+  src/blob.js        procedural blob characters (googly eyes, crown)
+  src/animator.js    squash & stretch, waddle, flail, blink — no rigs, no assets
+  src/tower-view.js  sky/star/sun shaders, altitude zones, instanced platform
+                     window, island, cloud sea + sprites, leader beacon
+  src/effects.js     pooled particles: dust, bump stars, confetti, poofs
+  src/audio.js       100% procedural WebAudio (wind by altitude, zone chords,
+                     boings, whistles, fanfares)
+  src/hud.js         altitude readout, boards, feed, toasts, labels, chat
+  src/main.js        orchestration: camera, fixed-rate input loop, events
 /server   Express + ws, authoritative simulation
-  game.js            the room: players, inputs, events, scoring, leaderboard
-  balls.js           ball physics incl. collider bounces
-  npcs.js            human AI (wander/pet/flee)
-  raccoons.js        raccoon AI (forage/alert/flee/hide + chase rewards)
-  digspots.js        buried-treasure state machine
-  test/multiplayer.test.mjs  two-client sync + collision + systems tests
+  game.js            the room: players, inputs, bumps, shoves, falls, crown
+  highscores.js      persistent all-time top-10
+  interest.js        3D interest filtering
+  test/multiplayer.test.mjs  50 checks: sync, PvP, tower invariants, movement
 /shared   The contract. Imported by BOTH sides (single source of truth):
   protocol.js        message shapes (C2S/S2C/EVENTS) and entity schemas
-  movement.js        the exact integrator (incl. obstacle push-out) — server
-                     steps it authoritatively, client steps it for prediction
-  world.js           terrain, water, tree/bench/prop placement, colliders,
-                     walls, dig spots — collision and visuals share one dataset
-  constants.js       tick rates, speeds, radii, cooldowns, scoring, loot table
-  breeds.js          species presets + procedural build params + Mutt mixer
+  movement.js        the exact platformer integrator — server steps it
+                     authoritatively, client steps it for prediction
+  tower.js           the deterministic tower: island dome, platform helix,
+                     spatial index, landing/support queries
+  constants.js       tick rates, physics, PvP tuning, scoring, palette
 ```
 
-**Why this stack:** raw `ws` instead of Colyseus (fewer moving parts for one
-authoritative room; the shared-integrator pattern gives prediction/reconciliation
-without a framework), hand-rolled arcade physics instead of cannon-es/rapier (the
-movement model is deterministic and shared between both sides — a physics engine
-can't be mirrored this cheaply, and jump arcs/ball bounces are fully covered),
-injected wallet providers instead of `@solana/wallet-adapter` (no React in the
-client; adapter would drag in the whole React tree). Everything else matches the
-spec: three.js + WebGL, Express + WebSocket, Vite, devnet-by-default Solana.
+**Why this stack:** raw `ws` instead of a framework (one authoritative room;
+the shared-integrator pattern gives prediction/reconciliation without one),
+hand-rolled deterministic platformer physics instead of a physics engine (the
+same integrator must run bit-for-bit on both sides — an engine can't be
+mirrored this cheaply), DOM HUD instead of in-canvas UI (crisp text, free
+layout). Everything is procedural, so the first paint needs zero asset fetches
+— the whole game is one ~137 KB gzipped bundle.
 
 ## Testing
 
@@ -180,9 +138,12 @@ spec: three.js + WebGL, Express + WebSocket, Vite, devnet-by-default Solana.
 npm test
 ```
 
-Spins up the real server and connects two WebSocket clients: asserts that
-movement from A appears in B's snapshots, bark and chat events propagate, and the
-interest-management filter culls out-of-range dogs.
+Spins up the real server and connects real WebSocket clients: movement
+replication and dt clamping, acks, shove cone/cooldown/truce-zone, bump
+separation, BIGFALL/VOIDED/CROWN/RECORD events, leaderboard shape, 3D interest
+culling, origin allowlisting — plus unit sweeps of the tower generator
+(reachability of every platform), the movement integrator (jump arcs, one-way
+landings, bouncy pads, edge walk-offs, void rescue), and the highscore board.
 
 ## Deploy
 
@@ -191,48 +152,39 @@ Node/npm runtimes.
 
 ### Heroku server
 
-1. Create a Heroku app from this repository and select a Basic or higher web
-   dyno for an always-on game server.
-2. Keep the process at one dyno: `heroku ps:scale web=1 -a <heroku-app>`. The
-   current authoritative park is intentionally an in-memory single room.
-3. Set the exact browser origins that may open WebSockets:
+1. Create a Heroku app from this repository (Basic+ dyno for an always-on
+   server) and keep it at one dyno: the tower is intentionally one in-memory
+   room. `heroku ps:scale web=1 -a <app>`.
+2. Restrict WebSocket origins:
 
    ```bash
-   heroku config:set \
-     ALLOWED_ORIGINS=https://<vercel-project>.vercel.app,https://<custom-domain> \
-     -a <heroku-app>
+   heroku config:set ALLOWED_ORIGINS=https://<project>.vercel.app -a <app>
    ```
 
-4. Deploy and verify `https://<heroku-app>.herokuapp.com/api/health`.
+3. Deploy and verify `https://<app>.herokuapp.com/api/health`.
 
-Heroku supplies `PORT`; do not configure it manually. The server handles
-`SIGTERM` by closing active sockets before the dyno exits. An empty
-`ALLOWED_ORIGINS` permits all origins for local development, so always configure
-it on Heroku. Add every exact Vercel preview origin you intentionally support.
+Heroku supplies `PORT`; don't set it manually. The server closes sockets on
+`SIGTERM`. An empty `ALLOWED_ORIGINS` permits all origins for local
+development, so always configure it in production. All-time highscores persist
+to `server/data/highscores.json` (ephemeral on Heroku restarts; point it at a
+mounted disk on hosts that have one).
 
 ### Vercel client
 
-Import the repository and set its Root Directory to `client`. The colocated
-`client/vercel.json` runs `npm run build` and publishes `dist`; its settings
-override stale Build Command and Output Directory values in the dashboard. Keep
-the option to include source files outside the Root Directory enabled because
-the client imports modules from `shared/`. Add these build-time environment
-variables for Production and any Preview environments you use:
+Import the repository, set Root Directory to `client` (keep "include files
+outside root" enabled — the client imports from `shared/`), and add:
 
 ```text
-VITE_WS_URL=wss://<heroku-app>.herokuapp.com/ws
-VITE_SOLANA_NETWORK=devnet
-VITE_SOLANA_RPC=https://api.devnet.solana.com
+VITE_WS_URL=wss://<app>.herokuapp.com/ws
 ```
 
-Redeploy after changing a `VITE_*` value. The browser automatically retries a
-lost or stale game connection with capped exponential backoff; a reconnect joins
-the current live park as a fresh server session.
+Redeploy after changing a `VITE_*` value. The browser retries lost connections
+with capped exponential backoff; a reconnect drops you back onto the island of
+the live tower as a fresh run.
 
 ## Notes & limits (vertical slice)
 
-- NPC petting and greetings have per-dog cooldowns so rewards cannot be farmed.
-- Journal progression is stored in the browser; account-level cloud persistence
-  is still the natural follow-up for wallet identities.
-- Server scores and live world state reset on a Heroku restart or deployment.
-- All audio is synthesized; swap in real clips by replacing `client/src/audio.js`.
+- One global room; all-time highscores are name-keyed (no accounts yet).
+- Shoves/bumps below 4 m altitude are disabled so the spawn island stays a
+  truce zone.
+- The tower ends at the 5,000 m Summit flag. Nobody has been there.

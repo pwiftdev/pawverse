@@ -1,5 +1,5 @@
 {
-  "name": "pawverse-client",
+  "name": "topple-client",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,7 +13,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@solana/web3.js": "^1.95.3",
     "three": "^0.166.1"
   },
   "devDependencies": {

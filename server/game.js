@@ -1,79 +1,57 @@
 // ─── Game room ───────────────────────────────────────────────────────────────
-// One global room: players, balls, NPCs. step() runs at TICK_RATE and
-// broadcasts interest-filtered snapshots at SNAPSHOT_RATE. All client
-// messages are validated here; movement integrates through shared/movement.js
-// so client prediction and the authoritative server agree exactly.
+// One global tower. step() runs at TICK_RATE and broadcasts interest-filtered
+// snapshots at SNAPSHOT_RATE. All client messages are validated here; movement
+// integrates through shared/movement.js so client prediction and the
+// authoritative server agree exactly. On top of the shared integrator the
+// server owns the parts clients can't predict: blob-vs-blob bumps, shoves,
+// fall drama, the crown, and the all-time highscore board.
 
 import {
   TICK_RATE,
   SNAPSHOT_RATE,
-  BARK_COOLDOWN_MS,
-  BARK_SCARE_RADIUS,
-  BITE_COOLDOWN_MS,
-  BITE_RANGE,
-  PVP_MAX_LIFE,
-  PVP_RESPAWN_PROTECTION_MS,
-  EMOTE_COOLDOWN_MS,
-  BALL_GRAB_RANGE,
-  BALL_RETURN_RANGE,
+  BODY_RADIUS,
+  BUMP_MAX_IMPULSE,
+  BUMP_MIN_IMPULSE,
+  BUMP_RESTITUTION,
+  BIG_FALL_M,
+  HUGE_FALL_M,
   CHAT_TTL_MS,
-  HOWL_GROUP_RADIUS,
-  HOWL_GROUP_WINDOW_MS,
+  CROWN_MIN_ALT,
   LEADERBOARD_MS,
-  HOWL_ROCK_RADIUS,
-  HOWL_ROCK_COOLDOWN_MS,
-  TRICK_WINDOW_MS,
-  TRICK_EMOTES_NEEDED,
-  TRICK_NPC_RANGE,
-  TRICK_COOLDOWN_MS,
-  POINTS,
-  REP,
-  HAPPINESS_MAX,
-  HAPPINESS_DECAY_PER_MIN,
+  SAFE_ALTITUDE,
+  SHOVE_ARC_COS,
+  SHOVE_COOLDOWN_MS,
+  SHOVE_IMPULSE,
+  SHOVE_LIFT,
+  SHOVE_RANGE,
+  SHOVE_RECOIL,
 } from "../shared/constants.js";
-import { SPAWN, HOWL_ROCK, groundHeightAt } from "../shared/world.js";
-import { SCENT_DISCOVERY_RADIUS, SCENT_SPOTS } from "../shared/living.js";
 import { C2S, S2C, EVENTS } from "../shared/protocol.js";
 import {
   createMoveState,
   stepMovement,
   deriveAnim,
 } from "../shared/movement.js";
-import { resolveCharacter } from "../shared/breeds.js";
-import {
-  sanitizeName,
-  sanitizeCustomization,
-  sanitizeChat,
-} from "./sanitize.js";
-import { withinInterest, filterVisible } from "./interest.js";
-import { BallSystem } from "./balls.js";
-import { NpcSystem } from "./npcs.js";
-import { RaccoonSystem } from "./raccoons.js";
-import { DigSystem } from "./digspots.js";
-import { ParkEventSystem } from "./park-events.js";
+import { islandHeightAt } from "../shared/tower.js";
+import { sanitizeName, sanitizeColor, sanitizeChat } from "./sanitize.js";
+import { filterVisible, withinInterest } from "./interest.js";
+import { Highscores } from "./highscores.js";
 
 const MAX_DT = 0.1; // per-input dt clamp (seconds)
 const INPUT_QUEUE_MAX = 60; // drop oldest beyond this
-const MAX_MSG_BYTES = 4096;
-const EMOTE_SET = new Set(["sit", "lay", "wag", "roll", "dig", "howl", "none"]);
-const HOWL_GROUP_SQ = HOWL_GROUP_RADIUS * HOWL_GROUP_RADIUS;
-const BALL_MOUTH_OFFSET = 0.45; // held ball sits just in front of the snout
-const BALL_MOUTH_HEIGHT = 0.35;
-const PET_HAPPINESS = 10;
+const MAX_MSG_BYTES = 2048;
+const BUMP_PAIR_DIST = BODY_RADIUS * 2; // blobs closer than this collide
+const BUMP_EVENT_MIN = 4; // impulse threshold for the FX event
+const BUMP_EVENT_GAP_MS = 300; // per-player FX event rate limit
 
 export class Game {
-  constructor() {
-    this.players = new Map(); // dogId → player
-    this.nextDogId = 1;
+  constructor({ highscores = new Highscores() } = {}) {
+    this.players = new Map(); // id → player
+    this.nextId = 1;
     this.tick = 0;
-    this.ballSys = new BallSystem();
-    this.npcSys = new NpcSystem();
-    this.raccoonSys = new RaccoonSystem();
-    this.digSys = new DigSystem();
-    this.parkEvents = new ParkEventSystem();
+    this.highscores = highscores;
     this.lastLeaderboard = 0;
-    this.epoch = Date.now(); // world-clock zero (day/night phase origin)
-    this.recentHowls = []; // [{id,x,z,t}] within HOWL_GROUP_WINDOW_MS
+    this.leaderId = null;
     // One simulation step covers SNAPSHOT_DIV ticks; snapshot on the last one.
     this.snapshotEvery = Math.max(1, Math.round(TICK_RATE / SNAPSHOT_RATE));
   }
@@ -110,89 +88,48 @@ export class Game {
     switch (msg.t) {
       case C2S.INPUT:
         return this.onInput(p, msg);
-      case C2S.BARK:
-        return this.onBark(p);
-      case C2S.BITE:
-        return this.onBite(p, msg);
-      case C2S.EMOTE:
-        return this.onEmote(p, msg);
-      case C2S.GRAB:
-        return this.onGrab(p, msg);
-      case C2S.DROP:
-        return this.onDrop(p);
-      case C2S.THROW:
-        return this.onThrow(p, msg);
+      case C2S.SHOVE:
+        return this.onShove(p);
       case C2S.CHAT:
         return this.onChat(p, msg);
-      case C2S.SNIFF:
-        return this.onSniff(p);
     }
   }
 
   join(s, msg) {
-    const name = sanitizeName(msg.name);
-    const custom = sanitizeCustomization(msg.dog, name);
-    const preset = resolveCharacter(custom);
-    const knownScentIds = new Set(SCENT_SPOTS.map((spot) => spot.id));
-    const discoveries = new Set(
-      Array.isArray(msg.discoveries)
-        ? msg.discoveries
-            .filter((id) => typeof id === "string" && knownScentIds.has(id))
-            .slice(0, SCENT_SPOTS.length)
-        : [],
-    );
-    const id = this.nextDogId++;
-    // Slight spawn jitter so dogs don't stack on the exact same tile.
-    const move = createMoveState(...spawnPoint());
+    const id = this.nextId++;
+    // Spawn on a ring around the island dome so blobs don't stack.
+    const a = Math.random() * Math.PI * 2;
+    const r = 8 + Math.random() * 3;
+    const move = createMoveState(Math.cos(a) * r, Math.sin(a) * r);
     const p = {
       id,
       ws: s.ws,
-      name,
-      custom,
-      preset,
+      name: sanitizeName(msg.name),
+      col: sanitizeColor(msg.color),
       move,
-      emote: "none",
-      ball: null, // held ball id
       inputQueue: [],
       lastSeq: 0,
-      lastBark: 0,
-      lastBite: 0,
-      lastEmote: 0,
-      ...initialPlayerStats(),
-      life: PVP_MAX_LIFE,
-      protectedUntil: Date.now() + PVP_RESPAWN_PROTECTION_MS,
+      lastShove: 0,
+      lastBumpEv: 0,
       chat: null,
-      recentEmotes: [], // [{e, t}] for trick combos
-      lastTrick: 0,
-      lastEcho: 0,
-      lastSniff: 0,
-      discoveries,
+      hiMark: move.y, // fall-drama watermark
+      sessionBest: 0, // best altitude this run
     };
     s.player = p;
     this.players.set(id, p);
 
-    // WELCOME carries the full world (unfiltered) so the client can bootstrap.
     this.send(p, {
       t: S2C.WELCOME,
       id,
       tick: this.tick,
-      you: this.serializeDog(p),
-      dogs: [...this.players.values()]
+      you: this.serializePlayer(p),
+      players: [...this.players.values()]
         .filter((o) => o !== p)
-        .map((o) => this.serializeDog(o)),
-      balls: this.ballSys.serializeAll(),
-      npcs: this.npcSys.serializeAll(),
-      raccoons: this.raccoonSys.serializeAll(),
-      digs: this.digSys.serializeAll(),
-      settings: {
-        tick: TICK_RATE,
-        epoch: this.epoch,
-        now: Date.now(),
-        parkEvent: this.parkEvents.serialize(),
-      },
+        .map((o) => this.serializePlayer(o)),
+      best: this.highscores.top(5),
+      settings: { tick: TICK_RATE },
     });
-    // Others hear about the new dog (global; clients cull by STATE).
-    this.broadcast({ t: S2C.JOIN, dog: this.serializeDog(p) }, p);
+    this.broadcast({ t: S2C.JOIN, player: this.serializePlayer(p) }, p);
   }
 
   onDisconnect(s) {
@@ -200,9 +137,7 @@ export class Game {
     if (!p) return;
     s.player = null;
     this.players.delete(p.id);
-    this.npcSys.forgetDog(p.id);
-    this.releaseHeldBall(p);
-    this.recentHowls = this.recentHowls.filter((h) => h.id !== p.id);
+    this.submitBest(p);
     this.broadcast({ t: S2C.LEAVE, id: p.id });
   }
 
@@ -230,205 +165,167 @@ export class Game {
     while (p.inputQueue.length) {
       const input = p.inputQueue.shift();
       const dt = Math.min(MAX_DT, Math.max(0, input.dt));
-      // Walking out of an emote cancels it (emote is a pose, not a lock).
-      if (input.f || input.b || input.l || input.r) p.emote = "none";
-      stepMovement(p.move, input, dt, p.preset.speed);
+      const ev = stepMovement(p.move, input, dt);
       if (input.seq > p.lastSeq) p.lastSeq = input.seq;
+      this.trackAltitude(p, ev);
     }
   }
 
-  // ── Social actions ────────────────────────────────────────────────────────
-
-  onBark(p) {
-    const now = Date.now();
-    if (now - p.lastBark < BARK_COOLDOWN_MS) return;
-    p.lastBark = now;
-    const pos = dogPos(p);
-    this.sendNear(pos, { t: S2C.EVENT, kind: EVENTS.BARK, id: p.id, p: pos });
-    this.scareNpcs(pos, BARK_SCARE_RADIUS, p);
+  /** High-water mark, personal best, fall drama, cloud-sea rescues. */
+  trackAltitude(p, ev) {
+    const y = p.move.y;
+    if (y > p.hiMark) p.hiMark = y;
+    if (y > p.sessionBest) p.sessionBest = y;
+    if (ev.landed || ev.voided) {
+      const drop = p.hiMark - y;
+      if (ev.voided) {
+        const pos = playerPos(p);
+        this.broadcast({
+          t: S2C.EVENT,
+          kind: EVENTS.VOIDED,
+          id: p.id,
+          n: p.name,
+          p: pos,
+        });
+      } else if (drop >= BIG_FALL_M) {
+        const pos = playerPos(p);
+        const msg = {
+          t: S2C.EVENT,
+          kind: EVENTS.BIGFALL,
+          id: p.id,
+          n: p.name,
+          drop: Math.round(drop),
+          alt: Math.round(y),
+          p: pos,
+        };
+        // Huge falls are tower-wide news; smaller ones stay local.
+        if (drop >= HUGE_FALL_M) this.broadcast(msg);
+        else this.sendNear(pos, msg, [p]);
+      }
+      p.hiMark = y;
+    }
   }
 
-  onSniff(p) {
-    const now = Date.now();
-    if (now - p.lastSniff < 900) return;
-    p.lastSniff = now;
-    const pos = dogPos(p);
-    this.sendNear(pos, { t: S2C.EVENT, kind: EVENTS.SNIFF, dog: p.id, p: pos });
-    const radiusSq = SCENT_DISCOVERY_RADIUS * SCENT_DISCOVERY_RADIUS;
-    const spot = SCENT_SPOTS.find(
-      (candidate) =>
-        !p.discoveries.has(candidate.id) &&
-        dist2(p.move.x, p.move.z, candidate.x, candidate.z) <= radiusSq,
-    );
-    if (!spot) return;
-    p.discoveries.add(spot.id);
-    this.addZoomies(p, POINTS.DISCOVERY);
-    this.satisfyNeed(p, "explore", 18);
-    this.send(p, {
-      t: S2C.EVENT,
-      kind: EVENTS.DISCOVERY,
-      dog: p.id,
-      spot: spot.id,
-      label: spot.label,
-      discoveryKind: spot.kind,
-      p: [spot.x, groundHeightAt(spot.x, spot.z), spot.z],
-    });
-  }
+  // ── Blob vs blob ──────────────────────────────────────────────────────────
 
-  onBite(p, msg) {
+  onShove(p) {
     const now = Date.now();
-    if (now - p.lastBite < BITE_COOLDOWN_MS) return;
-    if (p.preset.species !== "dog") return;
-    const target = this.players.get(msg.target);
-    if (!target || target === p) return;
-    if (!isPrey(target) || now < target.protectedUntil) return;
-    if (
-      dist2(p.move.x, p.move.z, target.move.x, target.move.z) >
-      BITE_RANGE * BITE_RANGE
-    )
-      return;
-    p.lastBite = now;
-    target.life = Math.max(0, target.life - 1);
-    target.scoreDirty = true;
-    const pos = dogPos(target);
+    if (now - p.lastShove < SHOVE_COOLDOWN_MS) return;
+    if (p.move.y < SAFE_ALTITUDE) return; // island base is a truce zone
+    // Facing direction (camera convention: forward = [sin(yaw), −cos(yaw)]).
+    const fx = Math.sin(p.move.yaw),
+      fz = -Math.cos(p.move.yaw);
+    let target = null,
+      bestDot = SHOVE_ARC_COS;
+    for (const o of this.players.values()) {
+      if (o === p || o.move.y < SAFE_ALTITUDE) continue;
+      const dx = o.move.x - p.move.x,
+        dy = o.move.y - p.move.y,
+        dz = o.move.z - p.move.z;
+      if (Math.abs(dy) > 1.6) continue;
+      const d = Math.hypot(dx, dz);
+      if (d > SHOVE_RANGE || d < 1e-4) continue;
+      const dot = (dx / d) * fx + (dz / d) * fz;
+      if (dot > bestDot) {
+        bestDot = dot;
+        target = o;
+      }
+    }
+    p.lastShove = now;
+    if (!target) return;
+    const dx = target.move.x - p.move.x,
+      dz = target.move.z - p.move.z;
+    const d = Math.hypot(dx, dz) || 1e-4;
+    const nx = dx / d,
+      nz = dz / d;
+    const t = target.move;
+    t.vx += nx * SHOVE_IMPULSE;
+    t.vz += nz * SHOVE_IMPULSE;
+    t.vy = Math.max(t.vy, SHOVE_LIFT);
+    t.grounded = false;
+    t.jumped = true; // no coyote jump out of a shove
+    p.move.vx -= nx * SHOVE_RECOIL;
+    p.move.vz -= nz * SHOVE_RECOIL;
+    const pos = playerPos(target);
     this.sendNear(pos, {
       t: S2C.EVENT,
-      kind: EVENTS.BITE,
+      kind: EVENTS.SHOVE,
       from: p.id,
       to: target.id,
       p: pos,
-      life: target.life,
-      maxLife: PVP_MAX_LIFE,
     });
-    this.sendNear(pos, {
-      t: S2C.EVENT,
-      kind: EVENTS.YELP,
-      id: target.id,
-      p: pos,
-    });
-    this.scareNpcs(pos, BARK_SCARE_RADIUS, p);
-    if (target.life === 0) this.catchPlayer(p, target, pos, now);
-  }
-
-  catchPlayer(attacker, target, caughtAt, now) {
-    this.releaseHeldBall(target);
-    const respawn = spawnPoint();
-    target.move = createMoveState(...respawn);
-    target.inputQueue.length = 0;
-    target.emote = "none";
-    target.chat = null;
-    target.recentEmotes.length = 0;
-    target.life = PVP_MAX_LIFE;
-    target.protectedUntil = now + PVP_RESPAWN_PROTECTION_MS;
-    Object.assign(target, initialPlayerStats());
-    this.sendNear(
-      caughtAt,
-      {
-        t: S2C.EVENT,
-        kind: EVENTS.CAUGHT,
-        by: attacker.id,
-        target: target.id,
-        p: caughtAt,
-        respawn: [r3(target.move.x), r3(target.move.y), r3(target.move.z)],
-        protectedUntil: target.protectedUntil,
-      },
-      [attacker, target],
-    );
-  }
-
-  onEmote(p, msg) {
-    const now = Date.now();
-    if (now - p.lastEmote < EMOTE_COOLDOWN_MS) return;
-    if (!EMOTE_SET.has(msg.emote)) return;
-    p.lastEmote = now;
-    p.emote = msg.emote;
-    if (msg.emote === "howl") this.onHowl(p, now);
-    if (msg.emote !== "none") this.checkTrickCombo(p, msg.emote, now);
   }
 
   /**
-   * Trick show: TRICK_EMOTES_NEEDED *distinct* emotes inside TRICK_WINDOW_MS,
-   * performed within TRICK_NPC_RANGE of a human → applause, +zoomies, +treat.
+   * Soft-body comedy: overlapping blobs push apart and trade an impulse along
+   * the contact normal. O(n²) over height-sorted players with early exit —
+   * fine for one room, and only near-equal heights can touch anyway.
    */
-  checkTrickCombo(p, emote, now) {
-    p.recentEmotes = p.recentEmotes.filter((r) => now - r.t <= TRICK_WINDOW_MS);
-    if (p.recentEmotes.at(-1)?.e !== emote)
-      p.recentEmotes.push({ e: emote, t: now });
-    if (now - p.lastTrick < TRICK_COOLDOWN_MS) return;
-    if (new Set(p.recentEmotes.map((r) => r.e)).size < TRICK_EMOTES_NEEDED)
-      return;
-    const audience = this.npcSys.npcs.find(
-      (n) =>
-        n.st !== "flee" &&
-        n.st !== "flinch" &&
-        dist2(n.x, n.z, p.move.x, p.move.z) <=
-          TRICK_NPC_RANGE * TRICK_NPC_RANGE,
-    );
-    if (!audience) return;
-    p.lastTrick = now;
-    p.recentEmotes = [];
-    p.treats += 1;
-    this.addZoomies(p, POINTS.TRICK);
-    this.recordParkProgress("trick", p);
-    this.addRep(p, 2);
-    const pos = dogPos(p);
-    this.sendNear(pos, {
-      t: S2C.EVENT,
-      kind: EVENTS.TRICK,
-      dog: p.id,
-      npc: audience.id,
-      p: pos,
-    });
-  }
-
-  onHowl(p, now) {
-    const pos = dogPos(p);
-    this.sendNear(pos, { t: S2C.EVENT, kind: EVENTS.HOWL, id: p.id, p: pos });
-    // Howl Rock: howling from the summit echoes across the whole park.
-    const rockD2 = dist2(p.move.x, p.move.z, HOWL_ROCK.x, HOWL_ROCK.z);
-    if (
-      rockD2 <= HOWL_ROCK_RADIUS * HOWL_ROCK_RADIUS &&
-      now - p.lastEcho >= HOWL_ROCK_COOLDOWN_MS
-    ) {
-      p.lastEcho = now;
-      this.addZoomies(p, POINTS.ECHO);
-      this.broadcast({ t: S2C.EVENT, kind: EVENTS.ECHO, id: p.id, p: pos });
-    }
-    // Prune stale howls, then look for a group around this howler.
-    this.recentHowls = this.recentHowls.filter(
-      (h) => now - h.t <= HOWL_GROUP_WINDOW_MS && h.id !== p.id,
-    );
-    const group = this.recentHowls.filter(
-      (h) => dist2(p.move.x, p.move.z, h.x, h.z) <= HOWL_GROUP_SQ,
-    );
-    if (group.length >= 1) {
-      // ≥2 dogs (this howler + at least one other) howling together.
-      const ids = [...new Set([p.id, ...group.map((h) => h.id)])];
-      this.sendNear(pos, {
-        t: S2C.EVENT,
-        kind: EVENTS.GROUP_HOWL,
-        ids,
-        p: pos,
-      });
-      for (const id of ids) {
-        const dog = this.players.get(id);
-        if (dog) {
-          this.addZoomies(dog, POINTS.GROUP_HOWL);
-          this.satisfyNeed(dog, "social", 14);
+  resolveBumps(now) {
+    const list = [...this.players.values()].sort((a, b) => a.move.y - b.move.y);
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i];
+      for (let j = i + 1; j < list.length; j++) {
+        const b = list[j];
+        if (b.move.y - a.move.y > 1.1) break; // sorted — nothing higher touches
+        if (a.move.y < SAFE_ALTITUDE && b.move.y < SAFE_ALTITUDE) continue;
+        const dx = b.move.x - a.move.x,
+          dz = b.move.z - a.move.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 >= BUMP_PAIR_DIST * BUMP_PAIR_DIST) continue;
+        const d = Math.sqrt(d2) || 1e-4;
+        const nx = dx / d,
+          nz = dz / d;
+        // positional separation, split evenly
+        const overlap = (BUMP_PAIR_DIST - d) / 2;
+        a.move.x -= nx * overlap;
+        a.move.z -= nz * overlap;
+        b.move.x += nx * overlap;
+        b.move.z += nz * overlap;
+        // impulse from approach speed along the normal
+        const rvx = b.move.vx - a.move.vx,
+          rvz = b.move.vz - a.move.vz;
+        const approach = -(rvx * nx + rvz * nz);
+        if (approach <= 0) continue; // already separating
+        // (1 + e) reverses the approach into a bounce instead of just damping it
+        const impulse = Math.min(
+          BUMP_MAX_IMPULSE,
+          Math.max(BUMP_MIN_IMPULSE, approach * (1 + BUMP_RESTITUTION)),
+        );
+        a.move.vx -= (nx * impulse) / 2;
+        a.move.vz -= (nz * impulse) / 2;
+        b.move.vx += (nx * impulse) / 2;
+        b.move.vz += (nz * impulse) / 2;
+        if (
+          impulse >= BUMP_EVENT_MIN &&
+          now - a.lastBumpEv > BUMP_EVENT_GAP_MS &&
+          now - b.lastBumpEv > BUMP_EVENT_GAP_MS
+        ) {
+          a.lastBumpEv = b.lastBumpEv = now;
+          const pos = [
+            r3((a.move.x + b.move.x) / 2),
+            r3((a.move.y + b.move.y) / 2),
+            r3((a.move.z + b.move.z) / 2),
+          ];
+          this.sendNear(pos, {
+            t: S2C.EVENT,
+            kind: EVENTS.BUMP,
+            a: a.id,
+            b: b.id,
+            p: pos,
+          });
         }
       }
-      this.recordParkProgress("howl", p);
-      this.recentHowls = this.recentHowls.filter((h) => !ids.includes(h.id));
-    } else {
-      this.recentHowls.push({ id: p.id, x: p.move.x, z: p.move.z, t: now });
     }
   }
+
+  // ── Chat ──────────────────────────────────────────────────────────────────
 
   onChat(p, msg) {
     const text = sanitizeChat(msg.text);
     if (!text) return;
     p.chat = { text, until: Date.now() + CHAT_TTL_MS };
-    this.sendNear(dogPos(p), {
+    this.sendNear(playerPos(p), {
       t: S2C.EVENT,
       kind: EVENTS.CHAT,
       id: p.id,
@@ -436,283 +333,75 @@ export class Game {
     });
   }
 
-  // ── Ball actions ──────────────────────────────────────────────────────────
+  // ── Highscores / crown ────────────────────────────────────────────────────
 
-  onGrab(p, msg) {
-    const b = this.ballSys.get(msg.ball);
-    if (!b || b.holder !== null) return;
-    if (
-      dist2(p.move.x, p.move.z, b.p[0], b.p[2]) >
-      BALL_GRAB_RANGE * BALL_GRAB_RANGE
-    )
-      return;
-    if (p.ball !== null) this.dropBall(p, false); // one ball per dog
-    // Mid-air catch of a ball someone else threw counts extra.
-    const rest = groundHeightAt(b.p[0], b.p[2]) + 0.4;
-    const caught = b.thrownBy !== null && b.thrownBy !== p.id && b.p[1] > rest;
-    b.holder = p.id;
-    b.thrownBy = null;
-    b.spawner = null; // frees the pad to respawn a new ball
-    b.v = [0, 0, 0];
-    p.ball = b.id;
-    this.addZoomies(p, caught ? POINTS.CATCH : POINTS.PICKUP);
-    this.satisfyNeed(p, "play", caught ? 10 : 5);
-    this.sendNear(dogPos(p), {
-      t: S2C.EVENT,
-      kind: EVENTS.PICKUP,
-      dog: p.id,
-      ball: b.id,
-      caught,
-    });
-  }
-
-  onDrop(p) {
-    if (p.ball === null) return;
-    this.dropBall(p, true);
-  }
-
-  /** Release a held ball without scoring, used for disconnects and PvP catches. */
-  releaseHeldBall(p) {
-    if (p.ball === null) return;
-    const ballId = p.ball;
-    p.ball = null;
-    this.ballSys.release(ballId, this.mouthPos(p), [0, 0, 0]);
-  }
-
-  /** Release the held ball at mouth position with a small forward velocity. */
-  dropBall(p, withEvent) {
-    const ballId = p.ball;
-    p.ball = null;
-    const mouth = this.mouthPos(p);
-    const fwd = forwardOf(p.move.yaw);
-    const b = this.ballSys.release(ballId, mouth, [
-      fwd[0] * 1.2,
-      1.0,
-      fwd[1] * 1.2,
-    ]);
-    if (!b) return;
-    // Returning a ball to a spawner pad earns a bonus.
-    for (const sp of this.ballSys.spawners) {
-      if (
-        dist2(b.p[0], b.p[2], sp.x, sp.z) <=
-        BALL_RETURN_RANGE * BALL_RETURN_RANGE
-      ) {
-        this.addZoomies(p, POINTS.RETURN);
-        this.recordParkProgress("fetch", p);
-        break;
-      }
-    }
-    if (withEvent)
-      this.sendNear(dogPos(p), {
-        t: S2C.EVENT,
-        kind: EVENTS.DROP,
-        dog: p.id,
-        ball: b.id,
-        p: b.p.map(r3),
-      });
-  }
-
-  onThrow(p, msg) {
-    if (p.ball === null) return;
-    let [dx, dy, dz] = Array.isArray(msg.dir) ? msg.dir : [0, 0, 0];
-    dx = Number(dx) || 0;
-    dy = Number(dy) || 0;
-    dz = Number(dz) || 0;
-    const len = Math.hypot(dx, dy, dz);
-    if (len < 1e-4) {
-      const f = forwardOf(p.move.yaw);
-      dx = f[0];
-      dy = 0.3;
-      dz = f[1];
-    } else {
-      dx /= len;
-      dy /= len;
-      dz /= len;
-    }
-    const power = Math.min(1, Math.max(0, Number(msg.power) || 0));
-    const speed = 4 + power * 10;
-    const ballId = p.ball;
-    p.ball = null;
-    const mouth = this.mouthPos(p);
-    const b = this.ballSys.release(
-      ballId,
-      mouth,
-      [dx * speed, dy * speed + 3, dz * speed],
-      p.id,
-    );
-    if (!b) return;
-    this.sendNear(dogPos(p), {
-      t: S2C.EVENT,
-      kind: EVENTS.THROW,
-      dog: p.id,
-      ball: b.id,
-    });
-  }
-
-  /** Mouth position of a dog — where held balls ride and throws originate. */
-  mouthPos(p) {
-    const f = forwardOf(p.move.yaw);
-    return [
-      p.move.x + f[0] * BALL_MOUTH_OFFSET,
-      p.move.y + BALL_MOUTH_HEIGHT * p.custom.size,
-      p.move.z + f[1] * BALL_MOUTH_OFFSET,
-    ];
-  }
-
-  // ── NPC glue ──────────────────────────────────────────────────────────────
-
-  /** Bark/bite scare: flinch→flee + EVENT SCARE, one rep penalty per action. */
-  scareNpcs(pos, radius, byPlayer) {
-    const scared = this.npcSys.scare(pos[0], pos[2], radius, Date.now());
-    for (const n of scared) {
-      this.sendNear(pos, {
-        t: S2C.EVENT,
-        kind: EVENTS.SCARE,
-        npc: n.id,
-        p: [r3(n.x), 0, r3(n.z)],
-      });
-      if (byPlayer) this.npcSys.remember(n.id, byPlayer.id, -2);
-    }
-    if (scared.length && byPlayer) this.addRep(byPlayer, REP.SCARE);
-  }
-
-  handlePetEvents(events) {
-    for (const ev of events) {
-      if (ev.kind === "greet") {
-        const pos = dogPos(ev.dog);
-        this.sendNear(pos, {
-          t: S2C.EVENT,
-          kind: EVENTS.GREET,
-          npc: ev.npc.id,
-          dog: ev.dog.id,
-          p: pos,
-        });
-        continue;
-      }
-      if (ev.kind !== "pet") continue;
-      const { npc, dog } = ev;
-      const pos = dogPos(dog);
-      this.sendNear(pos, {
-        t: S2C.EVENT,
-        kind: EVENTS.PET,
-        npc: npc.id,
-        dog: dog.id,
-      });
-      this.sendNear(pos, {
-        t: S2C.EVENT,
-        kind: EVENTS.FEED,
-        npc: npc.id,
-        dog: dog.id,
-        treats: dog.treats + 1,
-      });
-      dog.treats += 1;
-      dog.happiness = Math.min(HAPPINESS_MAX, dog.happiness + PET_HAPPINESS);
-      this.addRep(dog, REP.PET + REP.FEED);
-      this.addZoomies(dog, POINTS.PET);
-      this.satisfyNeed(dog, "social", 16);
-      this.npcSys.remember(npc.id, dog.id, 2);
-      dog.scoreDirty = true;
-    }
-  }
-
-  // ── Stats ─────────────────────────────────────────────────────────────────
-
-  addZoomies(p, n) {
-    p.zoomies += n;
-    p.scoreDirty = true;
-  }
-
-  satisfyNeed(p, need, amount) {
-    p.needs[need] = Math.min(100, p.needs[need] + amount);
-    p.scoreDirty = true;
-  }
-
-  recordParkProgress(kind, p) {
-    const result = this.parkEvents.record(
-      kind,
-      p.id,
-      Date.now(),
-      Math.min(2, this.players.size),
-    );
-    if (!result) return;
-    if (result.completedIds.length) {
-      for (const id of result.completedIds) {
-        const contributor = this.players.get(id);
-        if (contributor) this.addZoomies(contributor, POINTS.PARK_EVENT);
-      }
+  /** Offer a player's session best to the all-time board. */
+  submitBest(p) {
+    if (p.sessionBest < 8) return; // hopping around the island isn't a run
+    const prevTop = this.highscores.entries[0];
+    const changed = this.highscores.submit(p.name, Math.round(p.sessionBest));
+    if (!changed) return;
+    const top = this.highscores.entries[0];
+    // Only the tower record itself is an announcement.
+    if (!prevTop || top.alt > prevTop.alt) {
       this.broadcast({
         t: S2C.EVENT,
-        kind: EVENTS.PARK_COMPLETE,
-        event: this.parkEvents.serialize(),
-        ids: result.completedIds,
-        p: [0, 0, 0],
+        kind: EVENTS.RECORD,
+        n: top.n,
+        alt: top.alt,
       });
     }
-    this.broadcast({ t: S2C.PARK, event: this.parkEvents.serialize() });
   }
 
-  addRep(p, n) {
-    p.rep = Math.min(REP.MAX, Math.max(REP.MIN, p.rep + n));
-    p.scoreDirty = true;
+  broadcastLeaderboard() {
+    for (const p of this.players.values()) this.submitBest(p);
+    const ranked = [...this.players.values()].sort(
+      (a, b) => b.move.y - a.move.y,
+    );
+    const live = ranked
+      .slice(0, 5)
+      .map((p) => ({ id: p.id, n: p.name, alt: Math.round(p.move.y) }));
+    const all = this.highscores.top(5);
+
+    const leader = ranked[0];
+    const leaderId =
+      leader && leader.move.y >= CROWN_MIN_ALT ? leader.id : null;
+    if (leaderId !== null && leaderId !== this.leaderId) {
+      this.broadcast({
+        t: S2C.EVENT,
+        kind: EVENTS.CROWN,
+        id: leader.id,
+        n: leader.name,
+        alt: Math.round(leader.move.y),
+      });
+    }
+    this.leaderId = leaderId;
+    const leaderPos = leaderId !== null ? playerPos(leader) : null;
+
+    ranked.forEach((p, idx) => {
+      this.send(p, {
+        t: S2C.LEADERBOARD,
+        live,
+        all,
+        rank: idx + 1,
+        leaderId,
+        leaderPos,
+      });
+    });
   }
 
   // ── Simulation step ───────────────────────────────────────────────────────
 
   step() {
     const now = Date.now();
-    const dt = 1 / TICK_RATE;
     this.tick++;
 
     for (const p of this.players.values()) {
       this.applyInputs(p);
-      // Happiness decays slowly; only re-send SCORE when the floored value moves.
-      const before = Math.floor(p.happiness);
-      p.happiness = Math.max(
-        0,
-        p.happiness - HAPPINESS_DECAY_PER_MIN / 60 / TICK_RATE,
-      );
-      const playBefore = Math.floor(p.needs.play);
-      const socialBefore = Math.floor(p.needs.social);
-      p.needs.play = Math.max(0, p.needs.play - dt * 0.07);
-      p.needs.social = Math.max(0, p.needs.social - dt * 0.04);
-      if (
-        Math.floor(p.needs.play) !== playBefore ||
-        Math.floor(p.needs.social) !== socialBefore
-      )
-        p.scoreDirty = true;
-      if (Math.floor(p.happiness) !== before) p.scoreDirty = true;
       if (p.chat && p.chat.until <= now) p.chat = null;
-      if (p.scoreDirty) {
-        this.send(p, {
-          t: S2C.SCORE,
-          zoomies: p.zoomies,
-          happiness: Math.round(p.happiness),
-          treats: p.treats,
-          rep: p.rep,
-          life: p.life,
-          maxLife: PVP_MAX_LIFE,
-          needs: {
-            play: Math.round(p.needs.play),
-            social: Math.round(p.needs.social),
-            explore: Math.round(p.needs.explore),
-          },
-        });
-        p.scoreDirty = false;
-      }
     }
 
-    this.ballSys.update(dt, now, (holderId) => {
-      const holder = this.players.get(holderId);
-      return holder ? this.mouthPos(holder) : null;
-    });
-
-    this.handlePetEvents(this.npcSys.update(dt, now, this.players));
-    this.handleChaseEvents(this.raccoonSys.update(dt, now, this.players));
-    this.handleTreasureEvents(this.digSys.update(dt * 1000, now, this.players));
-
-    if (this.parkEvents.update(now)) {
-      this.broadcast({ t: S2C.PARK, event: this.parkEvents.serialize() });
-    }
+    this.resolveBumps(now);
 
     if (now - this.lastLeaderboard >= LEADERBOARD_MS && this.players.size) {
       this.lastLeaderboard = now;
@@ -722,89 +411,43 @@ export class Game {
     if (this.tick % this.snapshotEvery === 0) this.broadcastStates();
   }
 
-  handleChaseEvents(events) {
-    for (const ev of events) {
-      const pos = [r3(ev.x), r3(groundHeightAt(ev.x, ev.z)), r3(ev.z)];
-      this.addZoomies(ev.dog, POINTS.CHASE);
-      this.satisfyNeed(ev.dog, "play", 9);
-      this.recordParkProgress("chase", ev.dog);
-      this.sendNear(pos, {
-        t: S2C.EVENT,
-        kind: EVENTS.CHASE,
-        dog: ev.dog.id,
-        p: pos,
-      });
-    }
-  }
-
-  handleTreasureEvents(events) {
-    for (const ev of events) {
-      const { dog, spot, loot, zoomies } = ev;
-      dog.treats += 1;
-      this.addZoomies(dog, zoomies);
-      this.satisfyNeed(dog, "explore", 9);
-      this.recordParkProgress("treasure", dog);
-      this.addRep(dog, 1); // industrious dogs are good dogs
-      dog.scoreDirty = true;
-      const pos = [r3(spot.x), r3(groundHeightAt(spot.x, spot.z)), r3(spot.z)];
-      this.sendNear(pos, {
-        t: S2C.EVENT,
-        kind: EVENTS.TREASURE,
-        dog: dog.id,
-        spot: spot.id,
-        loot,
-        zoomies,
-        p: pos,
-      });
-    }
-  }
-
-  /** Top-5 by Zoomies + each player's own rank. */
-  broadcastLeaderboard() {
-    const ranked = [...this.players.values()].sort(
-      (a, b) => b.zoomies - a.zoomies,
-    );
-    const top = ranked.slice(0, 5).map((p) => ({ n: p.name, z: p.zoomies }));
-    ranked.forEach((p, i) => {
-      this.send(p, { t: S2C.LEADERBOARD, top, rank: i + 1 });
-    });
-  }
-
   // ── Snapshots / broadcasting ──────────────────────────────────────────────
 
   broadcastStates() {
-    const dogs = [...this.players.values()].map((p) => this.serializeDog(p));
-    const balls = this.ballSys.serializeAll();
-    const npcs = this.npcSys.serializeAll();
-    const raccoons = this.raccoonSys.serializeAll();
-    const digs = this.digSys.serializeAll(); // tiny (10 × {id,b}) — send whole
+    const all = [...this.players.values()].map((p) => this.serializePlayer(p));
     for (const p of this.players.values()) {
-      const { x, z } = p.move;
+      const { x, y, z } = p.move;
       this.send(p, {
         t: S2C.STATE,
         tick: this.tick,
         ack: p.lastSeq,
-        dogs: filterVisible(x, z, dogs, (d) => [d.p[0], d.p[2]], p.id),
-        balls: filterVisible(x, z, balls, (b) => [b.p[0], b.p[2]]),
-        npcs: filterVisible(x, z, npcs, (n) => [n.p[0], n.p[2]]),
-        raccoons: filterVisible(x, z, raccoons, (s) => [s.p[0], s.p[2]]),
-        digs,
+        players: filterVisible(
+          x,
+          y,
+          z,
+          all,
+          (e) => [e.p[0], e.p[1], e.p[2]],
+          p.id,
+        ),
       });
     }
   }
 
-  /** Global broadcast (JOIN/LEAVE), optionally skipping one player. */
+  /** Global broadcast (JOIN/LEAVE/news), optionally skipping one player. */
   broadcast(msg, except = null) {
     for (const p of this.players.values()) {
       if (p !== except) this.send(p, msg);
     }
   }
 
-  /** Event broadcast to players whose dog is within interest radius of pos. */
+  /** Event broadcast to players within interest radius of pos. */
   sendNear(pos, msg, requiredRecipients = []) {
     const required = new Set(requiredRecipients);
     for (const p of this.players.values()) {
-      if (required.has(p) || withinInterest(p.move.x, p.move.z, pos[0], pos[2]))
+      if (
+        required.has(p) ||
+        withinInterest(p.move.x, p.move.y, p.move.z, pos[0], pos[1], pos[2])
+      )
         this.send(p, msg);
     }
   }
@@ -813,16 +456,20 @@ export class Game {
     if (p.ws.readyState === 1) p.ws.send(JSON.stringify(msg));
   }
 
-  serializeDog(p) {
+  serializePlayer(p) {
+    const m = p.move;
     return {
       id: p.id,
       n: p.name,
-      c: p.custom,
-      p: [r3(p.move.x), r3(p.move.y), r3(p.move.z)],
-      ry: r3(p.move.yaw),
-      v: [r3(p.move.vx), r3(p.move.vy), r3(p.move.vz)],
-      anim: deriveAnim(p.move, p.emote),
-      ball: p.ball,
+      col: p.col,
+      p: [r3(m.x), r3(m.y), r3(m.z)],
+      ry: r3(m.yaw),
+      v: [r3(m.vx), r3(m.vy), r3(m.vz)],
+      g: m.grounded ? 1 : 0,
+      gt: m.groundType,
+      anim: deriveAnim(m),
+      alt: Math.round(Math.max(0, m.y)),
+      best: Math.round(p.sessionBest),
       chat: p.chat,
     };
   }
@@ -833,34 +480,9 @@ export class Game {
 function r3(v) {
   return Math.round(v * 1000) / 1000;
 }
-function dist2(ax, az, bx, bz) {
-  const dx = ax - bx,
-    dz = az - bz;
-  return dx * dx + dz * dz;
-}
-function dogPos(p) {
+function playerPos(p) {
   return [r3(p.move.x), r3(p.move.y), r3(p.move.z)];
 }
-function spawnPoint() {
-  return [
-    SPAWN.x + (Math.random() * 3 - 1.5),
-    SPAWN.z + (Math.random() * 3 - 1.5),
-  ];
-}
-function initialPlayerStats() {
-  return {
-    zoomies: 0,
-    happiness: HAPPINESS_MAX / 2,
-    treats: 0,
-    rep: 0,
-    scoreDirty: true,
-    needs: { play: 55, social: 45, explore: 0 },
-  };
-}
-function isPrey(player) {
-  return player.preset.species === "cat" || player.preset.species === "raccoon";
-}
-/** Planar forward for a yaw, matching stepMovement's camera convention. */
-function forwardOf(yaw) {
-  return [Math.sin(yaw), -Math.cos(yaw)];
-}
+
+/** Exported for tests: the island dome must exist where blobs spawn. */
+export { islandHeightAt };

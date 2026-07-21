@@ -1,4 +1,4 @@
-// ─── PAWVERSE shared gameplay constants ──────────────────────────────────────
+// ─── TOPPLE shared gameplay constants ────────────────────────────────────────
 // Imported by BOTH server (node) and client (vite). Keep it dependency-free ESM.
 
 export const TICK_RATE = 30; // server simulation rate (Hz)
@@ -6,105 +6,68 @@ export const SNAPSHOT_RATE = 15; // server → client state broadcast rate (Hz)
 export const INPUT_SEND_RATE = 30; // client → server input rate (Hz)
 export const INTERP_DELAY_MS = 150; // remote-entity interpolation buffer
 
-export const WORLD_SIZE = 220; // park square, centered on origin
-export const WORLD_BOUND = WORLD_SIZE / 2 - 2;
+// ── The world ────────────────────────────────────────────────────────────────
+export const WORLD_RADIUS = 60; // horizontal soft bound (circle around the axis)
+export const ISLAND_RADIUS = 26; // the floating base island
+export const VOID_Y = -26; // fall below this → lifted back to the island
+export const SAFE_ALTITUDE = 4; // below this no bumps/shoves (spawn peace)
+export const MAX_ALTITUDE = 5000; // where the tower generator stops (The Summit)
 
-export const WALK_SPEED = 4.2; // m/s
-export const SPRINT_SPEED = 7.5;
-export const SWIM_SPEED = 2.6;
-export const JUMP_VELOCITY = 7.5;
-export const GRAVITY = -22;
-export const ACCEL = 11; // 1/s — how fast velocity chases input
-export const DECEL = 14; // 1/s — stopping is snappier than starting
+// ── Movement (deterministic — shared by server sim + client prediction) ──────
+export const WALK_SPEED = 4.6; // m/s
+export const SPRINT_SPEED = 7.4;
+export const JUMP_VELOCITY = 9.2; // → apex ≈ 1.76 m with GRAVITY −24
+export const GRAVITY = -24;
+export const TERMINAL_VY = -42;
+export const ACCEL = 14; // 1/s ground — velocity chases input
+export const DECEL = 16; // 1/s ground — stopping is snappier
+export const AIR_ACCEL = 6; // steering mid-air is mushier
+export const AIR_DECEL = 1.6; // momentum carries through jumps
+export const ICE_ACCEL = 3.2; // ice platforms: everything slides
+export const ICE_DECEL = 0.9;
+export const COYOTE_TIME = 0.12; // s of grace after walking off an edge
+export const LAND_GRACE = 0.28; // m of horizontal forgiveness on platform edges
+export const BOUNCE_VELOCITY = 13.5; // bouncy pads launch you at this vy
+export const BODY_RADIUS = 0.42; // blob body radius for collisions
 
-export const INTEREST_RADIUS = 70; // m — entities beyond this are culled per-client
+// ── Player vs player ─────────────────────────────────────────────────────────
+export const BUMP_RESTITUTION = 0.8; // collision bounce factor
+export const BUMP_MIN_IMPULSE = 2.4; // even a gentle nudge shoves a little
+export const BUMP_MAX_IMPULSE = 11; // cap so physics stays comedic, not lethal
+export const SHOVE_RANGE = 2.3; // m — shove reach
+export const SHOVE_ARC_COS = 0.35; // facing cone half-angle (~69°)
+export const SHOVE_IMPULSE = 9.5; // horizontal m/s given to the target
+export const SHOVE_LIFT = 3.4; // vertical pop so shoves clear ledges
+export const SHOVE_RECOIL = 2.2; // shover slides back a touch
+export const SHOVE_COOLDOWN_MS = 1500;
+
+// ── Scoring / drama ──────────────────────────────────────────────────────────
+export const BIG_FALL_M = 25; // landing this far under your high mark = a fall
+export const HUGE_FALL_M = 60; // …this far = broadcast to the whole tower
+export const CROWN_MIN_ALT = 20; // leader beacon only above this
+export const LEADERBOARD_MS = 2000; // leaderboard broadcast cadence
+export const HIGHSCORE_KEEP = 10; // all-time entries persisted server-side
+
+// ── Interest management ──────────────────────────────────────────────────────
+export const INTEREST_RADIUS = 80; // m (3D) — entities beyond this are culled
 export const INTEREST_RADIUS_SQ = INTEREST_RADIUS * INTEREST_RADIUS;
 
-export const BARK_COOLDOWN_MS = 1500;
-export const BARK_SCARE_RADIUS = 7; // NPCs within this flinch/flee
-export const BITE_COOLDOWN_MS = 2000;
-export const BITE_RANGE = 2.6;
-export const PVP_MAX_LIFE = 3;
-export const PVP_RESPAWN_PROTECTION_MS = 5000;
-export const PET_RANGE = 3.2; // sit this close to an NPC to get petted
-export const PET_TIME_MS = 1500; // sit still this long before the NPC reacts
-export const EMOTE_COOLDOWN_MS = 400;
-
-export const MAX_BALLS = 12;
-export const BALL_RESPAWN_MS = 4000; // per-spawner cooldown between spawns
-export const BALL_GRAB_RANGE = 2.2;
-export const BALL_RETURN_RANGE = 3.0; // drop within this of a spawner → bonus
-export const BALL_RADIUS = 0.28;
-
-export const NPC_COUNT = 8;
-export const NPC_WALK_SPEED = 1.6;
-export const NPC_FLEE_SPEED = 4.5;
-export const NPC_FLEE_TIME_MS = 5000;
-
+// ── Chat ─────────────────────────────────────────────────────────────────────
 export const CHAT_MAX_LEN = 120;
 export const CHAT_TTL_MS = 4000;
 
-export const HOWL_GROUP_RADIUS = 15; // dogs howling together within this radius
-export const HOWL_GROUP_WINDOW_MS = 3000;
-
-// Raccoons
-export const RACCOON_COUNT = 7;
-export const RACCOON_ALERT_RADIUS = 7; // dog this close → raccoon bolts
-export const RACCOON_TAG_RADIUS = 1.8; // dog this close mid-flee → chased off!
-export const RACCOON_FLEE_SPEED = 6.8;
-export const RACCOON_HIDE_MS = 18_000; // time spent hiding up the tree
-export const RACCOON_FORAGE_SPEED = 1.3;
-
-// Buried treasure
-export const DIG_RADIUS = 2.4; // dig within this of a mound
-export const DIG_TIME_MS = 2200; // keep digging this long to unearth
-export const DIG_RESPAWN_MS = 45_000; // mound refills with a new treasure
-
-export const LEADERBOARD_MS = 3000; // broadcast cadence
-
-// Day/night cycle
-export const DAY_LENGTH_MS = 480_000; // one full day = 8 minutes
-
-// Howl Rock: howl at the summit → park-wide echo bonus
-export const HOWL_ROCK_RADIUS = 6;
-export const HOWL_ROCK_COOLDOWN_MS = 60_000;
-
-// Trick combos: 3 distinct emotes within the window, near a human
-export const TRICK_WINDOW_MS = 6000;
-export const TRICK_EMOTES_NEEDED = 3;
-export const TRICK_NPC_RANGE = 8;
-export const TRICK_COOLDOWN_MS = 20_000;
-
-// Scoring
-export const POINTS = {
-  PICKUP: 2, // grab a free ball off the ground
-  CATCH: 5, // grab a ball mid-air that someone threw
-  RETURN: 10, // bring a ball back to a spawner pad
-  GROUP_HOWL: 10, // synced howl bonus
-  PET: 5, // NPC pets you
-  CHASE: 8, // chase a raccoon up a tree
-  ECHO: 5, // howl from Howl Rock — heard across the park
-  TRICK: 5, // trick show for a human (also +1 treat)
-  DISCOVERY: 8, // first sniff discovery per session
-  PARK_EVENT: 20, // reward for contributing to a completed community event
-};
-
-/** Treasure table: label, weight, zoomies payout (treats always +1). */
-export const TREASURES = [
-  { loot: "bone", w: 5, zoomies: 10 },
-  { loot: "stick", w: 3, zoomies: 15 },
-  { loot: "shiny", w: 1, zoomies: 30 },
+// ── Blob palette (join screen swatches; index goes over the wire) ────────────
+export const BLOB_COLORS = [
+  "#ff6b6b", // coral
+  "#ff9f43", // tangerine
+  "#feca57", // lemon
+  "#7bed9f", // lime
+  "#55efc4", // mint
+  "#48dbfb", // sky
+  "#74b9ff", // blue
+  "#a29bfe", // lavender
+  "#fd79a8", // pink
+  "#e84393", // magenta
+  "#c8d6e5", // cloud
+  "#576574", // storm
 ];
-
-export const REP = {
-  MIN: -50,
-  MAX: 50,
-  PET: +2,
-  FEED: +2,
-  SCARE: -3,
-  GOOD_BOY: 10, // ≥ this → "Good Boy"
-  MENACE: -10, // ≤ this → "Menace"
-};
-
-export const HAPPINESS_MAX = 100;
-export const HAPPINESS_DECAY_PER_MIN = 4;

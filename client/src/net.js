@@ -1,14 +1,14 @@
 // ─── Network client ──────────────────────────────────────────────────────────
 // One WebSocket to the authoritative server. Owns:
-//  • client-side prediction for MY dog (shared/movement.js — same integrator
+//  • client-side prediction for MY blob (shared/movement.js — same integrator
 //    as the server) with an unacked-input ring and server reconciliation,
-//  • snapshot interpolation buffers for every REMOTE entity (dogs/balls/npcs),
+//  • snapshot interpolation buffers for every REMOTE player,
 //  • a tiny event bus the rest of the client subscribes to.
 
 import { INTERP_DELAY_MS } from "../../shared/constants.js";
 import { C2S, S2C } from "../../shared/protocol.js";
 import { createMoveState, stepMovement } from "../../shared/movement.js";
-import { groundHeightAt, isWaterAt, WATER_LEVEL } from "../../shared/world.js";
+import { P_NORMAL } from "../../shared/tower.js";
 import {
   reconnectDelay,
   SOCKET_CONNECT_TIMEOUT_MS,
@@ -29,7 +29,7 @@ function wsUrl() {
 export class Net {
   constructor() {
     this.ws = null;
-    this.id = null; // my dog id (set by WELCOME)
+    this.id = null; // my player id (set by WELCOME)
     this.connected = false;
     this.connection = null;
     this.shouldReconnect = false;
@@ -42,18 +42,9 @@ export class Net {
     this.pending = []; // inputs sent but not yet acked
     this.move = createMoveState(); // predicted authoritative-agreeing state
     this.smooth = { x: 0, y: 0, z: 0 }; // decaying reconciliation error (visual only)
-    this.speedMul = 1; // my breed speed multiplier
-    this.myBall = null; // ball id I'm holding (server-confirmed)
-    this.myAnim = "idle";
-    this.myEmote = "none";
 
-    // Remote interpolation buffers: id → [{t, p, ry, v, anim, ...}, …]
-    this.dogs = new Map(); // remote dogs: id → { info:{n,c}, buf:[], ball, chat }
-    this.balls = new Map(); // id → { t, p, v, holder, spawner }
-    this.npcs = new Map(); // id → { buf:[], st }
-    this.raccoons = new Map(); // id → { buf:[], st }
-    this.digs = new Map(); // spotId → buried (1|0)
-    this.parkEvent = null;
+    // Remote interpolation buffers: id → { info:{n,col}, buf:[], chat, alt }
+    this.players = new Map();
     this.listeners = new Map(); // event → Set<fn>
   }
 
@@ -65,8 +56,8 @@ export class Net {
     this.listeners.get(ev)?.forEach((fn) => fn(data));
   }
 
-  connect(name, customization, discoveries = []) {
-    this.connection = { name, customization, discoveries };
+  connect(name, color) {
+    this.connection = { name, color };
     this.shouldReconnect = true;
     this.openSocket();
   }
@@ -90,10 +81,8 @@ export class Net {
       this.connectTimer = null;
       this.lastMessageAt = Date.now();
       this.startWatchdog(ws);
-      const { name, customization, discoveries } = this.connection;
-      ws.send(
-        JSON.stringify({ t: C2S.JOIN, name, dog: customization, discoveries }),
-      );
+      const { name, color } = this.connection;
+      ws.send(JSON.stringify({ t: C2S.JOIN, name, color }));
     };
     ws.onmessage = (e) => {
       if (this.ws !== ws) return;
@@ -162,12 +151,7 @@ export class Net {
         const [x, y, z] = msg.you.p;
         this.move = createMoveState(x, z);
         this.move.y = y;
-        for (const d of msg.dogs) this.upsertDog(d);
-        for (const b of msg.balls) this.upsertBall(b);
-        for (const n of msg.npcs) this.upsertNpc(n);
-        for (const s of msg.raccoons || []) this.upsertRaccoon(s);
-        for (const d of msg.digs || []) this.digs.set(d.id, d.b);
-        this.parkEvent = msg.settings?.parkEvent || null;
+        for (const p of msg.players) this.upsertPlayer(p);
         this.emit("welcome", msg);
         break;
       }
@@ -175,25 +159,18 @@ export class Net {
         this.onState(msg);
         break;
       case S2C.JOIN:
-        this.upsertDog(msg.dog);
-        this.emit("dogjoin", msg.dog);
+        this.upsertPlayer(msg.player);
+        this.emit("playerjoin", msg.player);
         break;
       case S2C.LEAVE:
-        this.dogs.delete(msg.id);
-        this.emit("dogleave", msg.id);
+        this.players.delete(msg.id);
+        this.emit("playerleave", msg.id);
         break;
       case S2C.EVENT:
         this.emit("event", msg);
         break;
-      case S2C.SCORE:
-        this.emit("score", msg);
-        break;
       case S2C.LEADERBOARD:
         this.emit("leaderboard", msg);
-        break;
-      case S2C.PARK:
-        this.parkEvent = msg.event;
-        this.emit("park", msg.event);
         break;
     }
   }
@@ -201,98 +178,38 @@ export class Net {
   resetSession() {
     this.seq = 0;
     this.pending = [];
-    this.myBall = null;
-    this.myAnim = "idle";
-    this.myEmote = "none";
     this.smooth = { x: 0, y: 0, z: 0 };
-    this.dogs.clear();
-    this.balls.clear();
-    this.npcs.clear();
-    this.raccoons.clear();
-    this.digs.clear();
+    this.players.clear();
   }
 
   onState(msg) {
     const now = performance.now();
-    const seenDogs = new Set(),
-      seenBalls = new Set();
-    for (const d of msg.dogs) {
-      if (d.id === this.id) {
-        this.reconcile(d, msg.ack);
-        this.myBall = d.ball;
+    const seen = new Set();
+    for (const p of msg.players) {
+      if (p.id === this.id) {
+        this.reconcile(p, msg.ack);
         continue;
       }
-      seenDogs.add(d.id);
-      this.upsertDog(d, now);
+      seen.add(p.id);
+      this.upsertPlayer(p, now);
     }
-    for (const b of msg.balls) {
-      seenBalls.add(b.id);
-      this.upsertBall(b, now);
-    }
-    for (const n of msg.npcs) {
-      this.upsertNpc(n, now);
-    }
-    const seenRaccoons = new Set();
-    for (const s of msg.raccoons || []) {
-      seenRaccoons.add(s.id);
-      this.upsertRaccoon(s, now);
-    }
-    for (const d of msg.digs || []) this.digs.set(d.id, d.b);
-    // Entities missing from an interest-filtered snapshot left our radius (or died).
-    for (const id of this.dogs.keys())
-      if (!seenDogs.has(id)) this.dogs.delete(id);
-    for (const id of this.balls.keys())
-      if (!seenBalls.has(id)) this.balls.delete(id);
-    // Raccoons vanish when they hide up a tree (or leave interest).
-    for (const id of this.raccoons.keys())
-      if (!seenRaccoons.has(id)) this.raccoons.delete(id);
-    // NPCs are permanent; missing just means "out of interest" — keep last state.
+    // Entities missing from an interest-filtered snapshot left our radius.
+    for (const id of this.players.keys())
+      if (!seen.has(id)) this.players.delete(id);
     this.emit("state", msg);
   }
 
-  upsertDog(d, now = performance.now()) {
-    let rec = this.dogs.get(d.id);
+  upsertPlayer(p, now = performance.now()) {
+    let rec = this.players.get(p.id);
     if (!rec) {
-      rec = { info: { n: d.n, c: d.c }, buf: [], ball: null, chat: null };
-      this.dogs.set(d.id, rec);
+      rec = { info: { n: p.n, col: p.col }, buf: [], chat: null, alt: 0 };
+      this.players.set(p.id, rec);
     }
-    rec.info.n = d.n;
-    rec.info.c = d.c;
-    rec.ball = d.ball;
-    rec.chat = d.chat;
-    rec.buf.push({ t: now, p: d.p, ry: d.ry, v: d.v, anim: d.anim });
-    if (rec.buf.length > 30) rec.buf.splice(0, rec.buf.length - 30);
-  }
-
-  upsertBall(b, now = performance.now()) {
-    this.balls.set(b.id, {
-      t: now,
-      p: b.p,
-      v: b.v,
-      holder: b.holder,
-      spawner: b.spawner,
-    });
-  }
-
-  upsertNpc(n, now = performance.now()) {
-    let rec = this.npcs.get(n.id);
-    if (!rec) {
-      rec = { buf: [], st: n.st };
-      this.npcs.set(n.id, rec);
-    }
-    rec.st = n.st;
-    rec.buf.push({ t: now, p: n.p, ry: n.ry });
-    if (rec.buf.length > 30) rec.buf.splice(0, rec.buf.length - 30);
-  }
-
-  upsertRaccoon(s, now = performance.now()) {
-    let rec = this.raccoons.get(s.id);
-    if (!rec) {
-      rec = { buf: [], st: s.st };
-      this.raccoons.set(s.id, rec);
-    }
-    rec.st = s.st;
-    rec.buf.push({ t: now, p: s.p, ry: s.ry });
+    rec.info.n = p.n;
+    rec.info.col = p.col;
+    rec.chat = p.chat;
+    rec.alt = p.alt;
+    rec.buf.push({ t: now, p: p.p, ry: p.ry, v: p.v, anim: p.anim });
     if (rec.buf.length > 30) rec.buf.splice(0, rec.buf.length - 30);
   }
 
@@ -300,27 +217,30 @@ export class Net {
 
   /**
    * Run one fixed-rate input step locally (prediction) and send it.
+   * Returns the step's event flags (jumped/landed/bounced/voided) so the
+   * caller can drive local effects and audio with zero latency.
    * @param input {f,b,l,r,sprint,jump,yaw}   @param dt seconds
    */
   applyInput(input, dt) {
     const full = { ...input, seq: ++this.seq, dt };
-    stepMovement(this.move, full, dt, this.speedMul);
+    const ev = stepMovement(this.move, full, dt);
     this.pending.push(full);
     if (this.pending.length > PENDING_MAX) this.pending.shift();
     this.send({ t: C2S.INPUT, ...full });
+    return ev;
   }
 
   /**
-   * Server told us where our dog authoritatively is after processing inputs
+   * Server told us where our blob authoritatively is after processing inputs
    * ≤ ack. Rewind to that state, replay unacked inputs, and fold the visual
    * difference into a decaying smoothing offset so corrections never pop.
+   * (Bumps and shoves from other blobs arrive exactly this way.)
    */
-  reconcile(serverDog, ack) {
-    this.myAnim = serverDog.anim;
+  reconcile(serverP, ack) {
     const before = { x: this.move.x, y: this.move.y, z: this.move.z };
 
-    const [x, y, z] = serverDog.p;
-    const [vx, vy, vz] = serverDog.v;
+    const [x, y, z] = serverP.p;
+    const [vx, vy, vz] = serverP.v;
     const s = this.move;
     s.x = x;
     s.y = y;
@@ -328,18 +248,16 @@ export class Net {
     s.vx = vx;
     s.vy = vy;
     s.vz = vz;
-    s.yaw = serverDog.ry;
-    // grounded/swimming aren't on the wire — derive them like the server would.
-    s.swimming = isWaterAt(x, z);
-    s.grounded =
-      !s.swimming &&
-      Math.abs(y - groundHeightAt(x, z)) < 0.02 &&
-      Math.abs(vy) < 0.01;
-    if (s.swimming) s.y = WATER_LEVEL - 0.15;
+    s.yaw = serverP.ry;
+    s.grounded = serverP.g === 1;
+    s.groundType = Number.isInteger(serverP.gt) ? serverP.gt : P_NORMAL;
+    // Timers aren't on the wire; the pending-input replay recreates their
+    // effect over the window that matters.
+    s.coyote = s.grounded ? 0 : 1;
+    s.jumped = !s.grounded;
 
     this.pending = this.pending.filter((i) => i.seq > ack);
-    for (const input of this.pending)
-      stepMovement(s, input, input.dt, this.speedMul);
+    for (const input of this.pending) stepMovement(s, input, input.dt);
 
     // Visual smoothing: carry the old-vs-new difference and decay it per frame.
     const ex = before.x - s.x,
@@ -354,7 +272,7 @@ export class Net {
     }
   }
 
-  /** Where to RENDER my dog this frame (predicted + decaying error offset). */
+  /** Where to RENDER my blob this frame (predicted + decaying error offset). */
   renderPos(dt) {
     const k = Math.pow(0.001, dt); // ~fully decayed in 1 s
     this.smooth.x *= k;
@@ -368,8 +286,8 @@ export class Net {
   }
 
   /**
-   * Sample a remote entity's interpolation buffer at (now − INTERP_DELAY_MS).
-   * Returns {p:[x,y,z], ry, anim} or null if the buffer is empty.
+   * Sample a remote player's interpolation buffer at (now − INTERP_DELAY_MS).
+   * Returns {p:[x,y,z], ry, v, anim} or null if the buffer is empty.
    */
   sample(buf, now = performance.now()) {
     if (!buf.length) return null;
@@ -398,56 +316,11 @@ export class Net {
 
   // ── outgoing actions ───────────────────────────────────────────────────────
 
-  bark() {
-    this.send({ t: C2S.BARK });
-  }
-  bite(targetId) {
-    this.send({ t: C2S.BITE, target: targetId });
-  }
-  emote(emote) {
-    this.myEmote = emote;
-    this.send({ t: C2S.EMOTE, emote });
-  }
-  grab(ballId) {
-    this.send({ t: C2S.GRAB, ball: ballId });
-  }
-  drop() {
-    this.send({ t: C2S.DROP });
-  }
-  throw(dir, power) {
-    this.send({ t: C2S.THROW, dir, power });
+  shove() {
+    this.send({ t: C2S.SHOVE });
   }
   chat(text) {
     this.send({ t: C2S.CHAT, text });
-  }
-  sniff() {
-    this.send({ t: C2S.SNIFF });
-  }
-
-  respawnPlayer(id, position) {
-    if (!Array.isArray(position) || position.length !== 3) return;
-    if (id === this.id) {
-      this.move = createMoveState(position[0], position[2]);
-      this.move.y = position[1];
-      this.pending = [];
-      this.myBall = null;
-      this.myAnim = "idle";
-      this.myEmote = "none";
-      this.smooth = { x: 0, y: 0, z: 0 };
-      return;
-    }
-    const rec = this.dogs.get(id);
-    if (!rec) return;
-    rec.buf = [
-      {
-        t: performance.now(),
-        p: position,
-        ry: 0,
-        v: [0, 0, 0],
-        anim: "idle",
-      },
-    ];
-    rec.ball = null;
   }
 }
 

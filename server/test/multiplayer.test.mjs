@@ -1,30 +1,39 @@
-// ─── PAWVERSE multiplayer integration test ───────────────────────────────────
+// ─── TOPPLE multiplayer integration test ─────────────────────────────────────
 // Plain node + ws, no framework. Starts the real server on an ephemeral port,
-// connects two clients, and checks movement replication, acks, bark, chat —
-// plus a unit-level check of the interest filter. Run: node server/test/multiplayer.test.mjs
+// connects clients, and checks movement replication, acks, shoves, bumps,
+// fall drama, leaderboards — plus unit checks of the tower generator, the
+// shared platformer integrator, interest management, and highscores.
+// Run: node server/test/multiplayer.test.mjs
 
 import { WebSocket } from "ws";
+import path from "node:path";
+import os from "node:os";
+import fs from "node:fs";
 import { createServer } from "../index.js";
 import { withinInterest, filterVisible } from "../interest.js";
+import { Highscores } from "../highscores.js";
 import { C2S, S2C, EVENTS } from "../../shared/protocol.js";
-import { INTEREST_RADIUS, DIG_TIME_MS } from "../../shared/constants.js";
 import {
-  TREES,
-  DIG_SPOTS,
-  resolveObstacles,
-  WALLS,
-  BALL_SPAWNERS,
-  groundHeightAt,
-  HOWL_ROCK,
+  INTEREST_RADIUS,
+  WALK_SPEED,
+  SAFE_ALTITUDE,
+  VOID_Y,
+  JUMP_VELOCITY,
+  MAX_ALTITUDE,
+  BLOB_COLORS,
+} from "../../shared/constants.js";
+import {
+  PLATFORMS,
+  islandHeightAt,
+  supportAt,
+  landingAt,
+  P_BOUNCY,
+  P_REST,
+  MAX_EDGE_GAP,
+  MAX_RISE,
   SPAWN,
-} from "../../shared/world.js";
-import { WALK_SPEED } from "../../shared/constants.js";
+} from "../../shared/tower.js";
 import { createMoveState, stepMovement } from "../../shared/movement.js";
-import { DigSystem } from "../digspots.js";
-import { RaccoonSystem } from "../raccoons.js";
-import { NpcSystem } from "../npcs.js";
-import { ParkEventSystem } from "../park-events.js";
-import { SCENT_SPOTS } from "../../shared/living.js";
 import { isOriginAllowed, parseAllowedOrigins } from "../origins.js";
 import { reconnectDelay } from "../../client/src/reconnect.js";
 
@@ -47,7 +56,7 @@ function connect(port, origin) {
     );
     const c = {
       ws,
-      msgs: [], // full backlog so late waiters can match earlier messages
+      msgs: [],
       waiters: [],
       send: (o) => ws.send(JSON.stringify(o)),
       waitFor(pred, ms = 2500, label = "message") {
@@ -108,61 +117,49 @@ function rejectedStatus(port, origin) {
 const srv = createServer({ port: 0 });
 const port = await srv.listen();
 
-// Hard watchdog: never exceed the budget (leaderboard cadence needs ~3.5 s).
 const watchdog = setTimeout(() => {
   console.log("FAIL  global timeout (14s)");
   process.exit(1);
 }, 14000);
 
 try {
-  // 1) Three species join.
+  // 1) Two blobs join.
   const A = await connect(port);
   const B = await connect(port);
-  const C = await connect(port);
-  A.send({ t: C2S.JOIN, name: "Alpha", dog: { breed: "tabby" } });
-  B.send({
-    t: C2S.JOIN,
-    name: "Bravo",
-    dog: { breed: "raccoon" },
-    discoveries: [SCENT_SPOTS[0].id, "not-a-real-scent"],
-  });
-  C.send({ t: C2S.JOIN, name: "Charlie", dog: { breed: "shiba" } });
+  A.send({ t: C2S.JOIN, name: "Alpha", color: 3 });
+  B.send({ t: C2S.JOIN, name: "Bravo", color: 99 }); // invalid → random
   const wA = await A.waitFor((m) => m.t === S2C.WELCOME, 2500, "welcome A");
   const wB = await B.waitFor((m) => m.t === S2C.WELCOME, 2500, "welcome B");
-  const wC = await C.waitFor((m) => m.t === S2C.WELCOME, 2500, "welcome C");
   check(
     "both clients got WELCOME with distinct ids",
     wA.id !== undefined && wB.id !== undefined && wA.id !== wB.id,
   );
   check("WELCOME settings.tick = 30", wB.settings && wB.settings.tick === 30);
+  check("valid color survives sanitization", wA.you.col === 3);
   check(
-    "cat and raccoon character presets survive server sanitization",
-    wA.you.c.breed === "tabby" && wB.you.c.breed === "raccoon",
-  );
-  check("dog preset survives server sanitization", wC.you.c.breed === "shiba");
-  check(
-    "WELCOME carries full world (dogs/balls/npcs arrays)",
-    Array.isArray(wB.dogs) && Array.isArray(wB.balls) && Array.isArray(wB.npcs),
+    "invalid color is normalized into the palette",
+    Number.isInteger(wB.you.col) &&
+      wB.you.col >= 0 &&
+      wB.you.col < BLOB_COLORS.length,
   );
   check(
-    "WELCOME carries the active community event",
-    wB.settings?.parkEvent?.target > 0 &&
-      typeof wB.settings.parkEvent.label === "string",
+    "WELCOME carries players + all-time board",
+    Array.isArray(wB.players) && Array.isArray(wB.best),
   );
-  const bDiscoveries = srv.game.players.get(wB.id).discoveries;
   check(
-    "JOIN accepts only known persisted scent ids",
-    bDiscoveries.size === 1 && bDiscoveries.has(SCENT_SPOTS[0].id),
+    "spawn is on the island at island height",
+    Math.hypot(wA.you.p[0], wA.you.p[2]) < 15 &&
+      Math.abs(wA.you.p[1] - (islandHeightAt(wA.you.p[0], wA.you.p[2]) ?? -9)) <
+        0.05,
   );
 
-  // 2) B sees A spawn nearby (same spawn area → inside interest radius).
+  // 2) B sees A in STATE (same island → inside interest radius).
   const firstStateWithA = await B.waitFor(
-    (m) => m.t === S2C.STATE && m.dogs.some((d) => d.id === wA.id),
+    (m) => m.t === S2C.STATE && m.players.some((d) => d.id === wA.id),
     2500,
     "B state containing A",
   );
-  const aStart = firstStateWithA.dogs.find((d) => d.id === wA.id).p;
-  check("B sees A in STATE (interest includes nearby dogs)", true);
+  const aStart = firstStateWithA.players.find((d) => d.id === wA.id).p;
 
   // 3) A moves forward; dt 0.5 must be clamped server-side to 0.1 s.
   let seq = 1;
@@ -171,25 +168,24 @@ try {
   const moved = await B.waitFor(
     (m) => {
       if (m.t !== S2C.STATE) return false;
-      const d = m.dogs.find((x) => x.id === wA.id);
+      const d = m.players.find((x) => x.id === wA.id);
       if (!d) return false;
       return Math.hypot(d.p[0] - aStart[0], d.p[2] - aStart[2]) > 0.5;
     },
     2000,
     "A moved on B",
   );
-  const aNow = moved.dogs.find((x) => x.id === wA.id).p;
+  const aNow = moved.players.find((x) => x.id === wA.id).p;
   const dist = Math.hypot(aNow[0] - aStart[0], aNow[2] - aStart[2]);
   check(
     "A moved on B via INPUT replication",
     dist > 0.5,
-    `dist=${dist.toFixed(2)}`,
+    `d=${dist.toFixed(2)}`,
   );
-  // 12 inputs × clamped 0.1 s × ~4.54 m/s ≈ 5.4 m; unclamped would be ~27 m.
   check(
-    "dt clamped to ≤0.1 s (moved < 12 m for 12 inputs)",
+    "dt clamped to ≤0.1 s (moved < 12 m)",
     dist < 12,
-    `dist=${dist.toFixed(2)}`,
+    `d=${dist.toFixed(2)}`,
   );
 
   // 4) A's own STATE carries an ack for the processed inputs.
@@ -204,135 +200,175 @@ try {
     `ack=${acked.ack}`,
   );
 
-  // 5) BARK replicates to B with A's id.
-  A.send({ t: C2S.BARK });
-  const bark = await B.waitFor(
-    (m) => m.t === S2C.EVENT && m.kind === EVENTS.BARK,
-    2000,
-    "bark event",
-  );
-  check("B received EVENT BARK from A", bark.id === wA.id);
-
-  // 6) CHAT replicates to B (and is sanitized).
-  A.send({ t: C2S.CHAT, text: "  hello park  " });
+  // 5) CHAT replicates to B (and is sanitized).
+  A.send({ t: C2S.CHAT, text: "  going up  " });
   const chat = await B.waitFor(
     (m) => m.t === S2C.EVENT && m.kind === EVENTS.CHAT,
     2000,
     "chat event",
   );
   check(
-    "B received EVENT CHAT from A",
-    chat.id === wA.id && chat.text === "hello park",
+    "B received sanitized CHAT from A",
+    chat.id === wA.id && chat.text === "going up",
   );
 
-  // PvP is dog-versus-runner only and the server owns range, life, and respawns.
-  const cat = srv.game.players.get(wA.id);
-  const runner = srv.game.players.get(wB.id);
-  const dog = srv.game.players.get(wC.id);
-  dog.move.x = runner.move.x;
-  dog.move.z = runner.move.z;
-  runner.protectedUntil = 0;
-  runner.zoomies = 42;
-  runner.treats = 3;
-  runner.rep = 8;
-  runner.happiness = 90;
-  runner.needs = { play: 90, social: 90, explore: 90 };
-  cat.move.x = dog.move.x;
-  cat.move.z = dog.move.z;
-  srv.game.onBite(cat, { target: dog.id });
-  check("cats cannot damage dogs", dog.life === 3);
-  srv.game.onBite(dog, { target: cat.id });
-  check("dogs cannot damage protected runners", cat.life === 3);
-  dog.move.x = runner.move.x + 20;
-  srv.game.onBite(dog, { target: runner.id });
-  check("server rejects out-of-range dog bites", runner.life === 3);
-  dog.move.x = runner.move.x;
-
-  for (const expectedLife of [2, 1]) {
-    dog.lastBite = 0;
-    srv.game.onBite(dog, { target: runner.id });
-    check(
-      `dog bite reduces runner life to ${expectedLife}`,
-      runner.life === expectedLife,
-    );
-  }
-  dog.lastBite = 0;
-  const caughtPromise = B.waitFor(
-    (m) =>
-      m.t === S2C.EVENT && m.kind === EVENTS.CAUGHT && m.target === runner.id,
+  // 6) Shove: server owns range, cone, cooldown, and the truce zone.
+  const pa = srv.game.players.get(wA.id);
+  const pb = srv.game.players.get(wB.id);
+  // Truce: both on the island (below SAFE_ALTITUDE) → shove refused.
+  pa.move.x = 0;
+  pa.move.z = 0;
+  pa.move.y = 1;
+  pb.move.x = 0;
+  pb.move.z = -1.5;
+  pb.move.y = 1;
+  pa.move.yaw = 0; // faces −z, straight at B
+  pa.lastShove = 0;
+  const vbBefore = Math.hypot(pb.move.vx, pb.move.vz);
+  srv.game.onShove(pa);
+  check(
+    "island is a truce zone (no shove below SAFE_ALTITUDE)",
+    Math.hypot(pb.move.vx, pb.move.vz) === vbBefore &&
+      pa.move.y < SAFE_ALTITUDE,
+  );
+  // Up on the tower the shove lands.
+  pa.move.y = pb.move.y = 30;
+  pa.lastShove = 0;
+  const shoveEvP = B.waitFor(
+    (m) => m.t === S2C.EVENT && m.kind === EVENTS.SHOVE && m.to === wB.id,
     2000,
-    "PvP caught event",
+    "shove event",
   );
-  srv.game.onBite(dog, { target: runner.id });
-  const caught = await caughtPromise;
+  srv.game.onShove(pa);
+  const shoveEv = await shoveEvP;
   check(
-    "third dog bite catches and respawns runner",
-    caught.by === dog.id &&
-      runner.life === 3 &&
-      Math.hypot(runner.move.x - SPAWN.x, runner.move.z - SPAWN.z) < 3,
+    "shove launches the target with lift",
+    shoveEv.from === wA.id &&
+      Math.hypot(pb.move.vx, pb.move.vz) > 5 &&
+      pb.move.vy > 0 &&
+      pb.move.grounded === false,
   );
+  const vAfter = Math.hypot(pb.move.vx, pb.move.vz);
+  srv.game.onShove(pa); // immediate second — cooldown blocks
   check(
-    "catch resets runner session stats",
-    runner.zoomies === 0 &&
-      runner.treats === 0 &&
-      runner.rep === 0 &&
-      runner.happiness === 50 &&
-      runner.needs.play === 55 &&
-      runner.needs.social === 45 &&
-      runner.needs.explore === 0,
-  );
-  check(
-    "caught runner receives spawn protection",
-    runner.protectedUntil > Date.now(),
+    "shove cooldown blocks immediate repeat",
+    Math.hypot(pb.move.vx, pb.move.vz) === vAfter,
   );
 
-  // Sniff discoveries are validated against the authoritative player position.
-  const scent = SCENT_SPOTS[0];
-  const playerA = srv.game.players.get(wA.id);
-  playerA.move.x = scent.x;
-  playerA.move.z = scent.z;
-  A.send({ t: C2S.SNIFF });
-  const discovery = await A.waitFor(
-    (m) => m.t === S2C.EVENT && m.kind === EVENTS.DISCOVERY,
+  // 7) Bumps: overlapping blobs get separated and impulsed apart.
+  pa.move.x = 0;
+  pa.move.z = 0;
+  pa.move.y = 30;
+  pb.move.x = 0.3;
+  pb.move.z = 0;
+  pb.move.y = 30;
+  pa.move.vx = 3;
+  pb.move.vx = -3;
+  srv.game.resolveBumps(Date.now());
+  check(
+    "bump separates overlapping blobs and reverses approach",
+    Math.abs(pb.move.x - pa.move.x) > 0.6 && pb.move.vx > pa.move.vx,
+    `dx=${Math.abs(pb.move.x - pa.move.x).toFixed(2)}`,
+  );
+
+  // 8) Fall drama: landing far below the high-water mark → BIGFALL broadcast.
+  pa.hiMark = 200;
+  pa.move.y = 40;
+  const fallP = B.waitFor(
+    (m) => m.t === S2C.EVENT && m.kind === EVENTS.BIGFALL && m.id === wA.id,
     2000,
-    "sniff discovery",
+    "bigfall event",
   );
+  srv.game.trackAltitude(pa, { landed: true, voided: false });
+  const fall = await fallP;
   check(
-    "sniff discovers a nearby server-validated scent",
-    discovery.spot === scent.id && playerA.discoveries.has(scent.id),
+    "BIGFALL carries the drop and resets the watermark",
+    fall.drop === 160 && fall.n === "Alpha" && pa.hiMark === pa.move.y,
   );
 
-  // 7) Interest filter unit checks (a dog 100 m away must be excluded).
-  check("withinInterest: 5 m included", withinInterest(0, 0, 3, 4) === true);
+  // 9) Cloud-sea rescue → VOIDED broadcast.
+  const voidP = B.waitFor(
+    (m) => m.t === S2C.EVENT && m.kind === EVENTS.VOIDED && m.id === wA.id,
+    2000,
+    "voided event",
+  );
+  srv.game.trackAltitude(pa, { landed: false, voided: true });
+  await voidP;
+  check("VOIDED reaches other players", true);
+
+  // 10) Leaderboard: live + all-time + rank + crown.
+  pa.move.y = 120; // A is clearly the leader (above CROWN_MIN_ALT)
+  const crownP = B.waitFor(
+    (m) => m.t === S2C.EVENT && m.kind === EVENTS.CROWN && m.id === wA.id,
+    4000,
+    "crown event",
+  );
+  const lb = await B.waitFor(
+    (m) => m.t === S2C.LEADERBOARD,
+    4000,
+    "leaderboard",
+  );
   check(
-    `withinInterest: 100 m excluded (radius ${INTEREST_RADIUS})`,
-    withinInterest(0, 0, 100, 0) === false,
+    "LEADERBOARD has live rows, all-time rows, own rank",
+    Array.isArray(lb.live) &&
+      lb.live.length >= 1 &&
+      Array.isArray(lb.all) &&
+      typeof lb.rank === "number" &&
+      lb.live.every(
+        (r) => typeof r.n === "string" && typeof r.alt === "number",
+      ),
+  );
+  const crown = await crownP;
+  check(
+    "CROWN announces the new leader",
+    crown.n === "Alpha" && crown.alt >= 100,
+  );
+  const lb2 = await B.waitFor(
+    (m) => m.t === S2C.LEADERBOARD && m.leaderId === wA.id,
+    4000,
+    "leader in leaderboard",
+  );
+  check(
+    "leaderboard carries leaderId + leaderPos for the beacon",
+    Array.isArray(lb2.leaderPos) && lb2.leaderPos.length === 3,
+  );
+
+  // 11) Interest filter unit checks (3D — height separation culls too).
+  check(
+    "withinInterest: 5 m included",
+    withinInterest(0, 0, 0, 3, 4, 0) === true,
+  );
+  check(
+    `withinInterest: ${INTEREST_RADIUS + 20} m vertical excluded`,
+    withinInterest(0, 0, 0, 0, INTEREST_RADIUS + 20, 0) === false,
   );
   const filtered = filterVisible(
     0,
     0,
+    0,
     [
-      { id: 1, x: 100, z: 0 },
-      { id: 2, x: 5, z: 0 },
-      { id: 3, x: -500, z: 0 },
+      { id: 1, x: 0, y: 300, z: 0 },
+      { id: 2, x: 5, y: 0, z: 0 },
+      { id: 3, x: -500, y: 0, z: 0 },
     ],
-    (e) => [e.x, e.z],
+    (e) => [e.x, e.y, e.z],
     3,
   );
   check(
-    "filterVisible: far dog excluded, near dog + self kept",
+    "filterVisible: far blob excluded, near blob + self kept",
     filtered.length === 2 &&
       filtered.some((e) => e.id === 2) &&
       filtered.some((e) => e.id === 3),
   );
 
+  // 12) Origin allowlist + reconnect backoff (unchanged infrastructure).
   const allowedOrigins = parseAllowedOrigins(
-    "https://pawverse.vercel.app/, https://play.pawverse.com, invalid",
+    "https://topple.vercel.app/, https://play.topple.gg, invalid",
   );
   check(
     "origin allowlist normalizes and accepts configured hosts",
     allowedOrigins.size === 2 &&
-      isOriginAllowed("https://pawverse.vercel.app", allowedOrigins),
+      isOriginAllowed("https://topple.vercel.app", allowedOrigins),
   );
   check(
     "origin allowlist rejects missing and unconfigured origins",
@@ -350,136 +386,6 @@ try {
       reconnectDelay(10, 0.5) === 15000,
   );
 
-  // 8) WELCOME carries the new world systems.
-  check(
-    "WELCOME carries raccoons + dig spots",
-    Array.isArray(wB.raccoons) &&
-      Array.isArray(wB.digs) &&
-      wB.digs.length === DIG_SPOTS.length,
-  );
-
-  // 9) Leaderboard broadcast arrives with names and scores.
-  const lb = await B.waitFor(
-    (m) => m.t === S2C.LEADERBOARD,
-    4000,
-    "leaderboard",
-  );
-  check(
-    "LEADERBOARD has top list + own rank",
-    Array.isArray(lb.top) &&
-      lb.top.length >= 1 &&
-      typeof lb.rank === "number" &&
-      lb.top.every((r) => typeof r.n === "string" && typeof r.z === "number"),
-  );
-
-  // 10) Collision: resolveObstacles pushes a point out of a tree trunk.
-  {
-    const tree = TREES[0];
-    const p = { x: tree.x + 0.05, z: tree.z - 0.05, y: 0 };
-    resolveObstacles(p, 0.35);
-    const d = Math.hypot(p.x - tree.x, p.z - tree.z);
-    check(
-      "resolveObstacles pushes out of a tree",
-      d >= 0.42 + 0.35 - 1e-6,
-      `d=${d.toFixed(3)}`,
-    );
-  }
-
-  // 11) Collision inside stepMovement: walking into a trunk never penetrates it.
-  {
-    const tree = TREES[0];
-    const s = createMoveState(tree.x, tree.z + 3);
-    // camera yaw 0 → forward is −z, i.e. straight at the tree
-    for (let i = 0; i < 90; i++) stepMovement(s, { f: true, yaw: 0 }, 1 / 30);
-    const d = Math.hypot(s.x - tree.x, s.z - tree.z);
-    check(
-      "stepMovement blocks at tree trunks",
-      d >= 0.42 + 0.35 - 1e-6,
-      `d=${d.toFixed(3)}`,
-    );
-  }
-
-  // 12) Collision: yard fence wall blocks; the gate gap lets dogs through.
-  {
-    const wall = WALLS[0]; // north yard rail
-    const p = { x: (wall.x1 + wall.x2) / 2, z: wall.z1 + 0.1, y: 0 };
-    resolveObstacles(p, 0.35);
-    check(
-      "yard fence pushes a grounded dog out",
-      Math.abs(p.z - wall.z1) >= 0.28 + 0.35 - 1e-6,
-    );
-    const inGate = { x: -30 + 0.0, z: 0, y: 0 }; // east rail x=−30, gate spans z −4…4
-    const before = { ...inGate };
-    resolveObstacles(inGate, 0.35);
-    check(
-      "gate gap stays open",
-      inGate.x === before.x && inGate.z === before.z,
-    );
-  }
-
-  // 13) DigSystem: digging near a full mound for DIG_TIME_MS yields a treasure.
-  {
-    const digSys = new DigSystem();
-    const spot = DIG_SPOTS[0];
-    const digger = {
-      id: 99,
-      move: {
-        x: spot.x + 0.5,
-        z: spot.z,
-        y: 0,
-        vx: 0,
-        vz: 0,
-        grounded: true,
-        swimming: false,
-      },
-      emote: "dig",
-    };
-    const dogs = new Map([[99, digger]]);
-    let evs = digSys.update(DIG_TIME_MS - 50, 1000, dogs); // not yet…
-    check("dig: no treasure before DIG_TIME_MS", evs.length === 0);
-    evs = digSys.update(100, 1100, dogs); // …crosses the line
-    check(
-      "dig: treasure unearthed after digging long enough",
-      evs.length === 1 &&
-        evs[0].dog === digger &&
-        typeof evs[0].loot === "string" &&
-        evs[0].zoomies > 0,
-    );
-    check(
-      "dig: mound now empty on the wire",
-      digSys.serializeAll().find((d) => d.id === spot.id).b === 0,
-    );
-  }
-
-  // Rotating park events cap progress and retain unique contributors.
-  {
-    const park = new ParkEventSystem(1000);
-    const kind = park.current.kind;
-    let completion = null;
-    for (let i = 0; i < park.current.target; i++)
-      completion = park.record(kind, i + 1, 1100 + i, 2);
-    check(
-      "park event completes at its target",
-      park.current.complete && completion.completedIds.length > 0,
-    );
-    check(
-      "park event serialization omits the internal contributor Set",
-      !("contributors" in park.serialize()) &&
-        park.serialize().participants === park.current.target,
-    );
-  }
-
-  {
-    const npcs = new NpcSystem();
-    npcs.remember(0, 42, 2);
-    check("NPC remembers a friendly dog", npcs.npcs[0].memories.get(42) === 2);
-    npcs.forgetDog(42);
-    check(
-      "NPC memory is cleaned up when a dog leaves",
-      !npcs.npcs[0].memories.has(42),
-    );
-  }
-
   {
     const secureSrv = createServer({
       port: 0,
@@ -488,15 +394,15 @@ try {
     const securePort = await secureSrv.listen();
     try {
       const accepted = await connect(securePort, "https://allowed.example");
-      accepted.send({ t: C2S.JOIN, name: "Origin", dog: { breed: "shiba" } });
+      accepted.send({ t: C2S.JOIN, name: "Origin", color: 0 });
       const welcome = await accepted.waitFor(
-        (message) => message.t === S2C.WELCOME,
+        (m) => m.t === S2C.WELCOME,
         2000,
         "origin welcome",
       );
       check(
         "configured browser origin completes a WebSocket upgrade",
-        Boolean(welcome.id),
+        !!welcome.id,
       );
       check(
         "unconfigured browser origin receives HTTP 403",
@@ -508,68 +414,181 @@ try {
     }
   }
 
-  // 14) RaccoonSystem: a dog on top of a fleeing raccoon tags it (chase event).
+  // 13) Tower generator: every platform is reachable from something below it.
   {
-    const raccoonSys = new RaccoonSystem();
-    const raccoon = raccoonSys.raccoons[0];
-    const chaser = { id: 7, move: { x: raccoon.x, z: raccoon.z, y: 0 } };
-    const dogs = new Map([[7, chaser]]);
-    let chaseEv = null;
-    let now = 0;
-    for (let i = 0; i < 100 && !chaseEv; i++) {
-      now += 100;
-      chaser.move.x = raccoon.x;
-      chaser.move.z = raccoon.z;
-      const evs = raccoonSys.update(0.1, now, dogs);
-      chaseEv = evs.find((e) => e.kind === "chase") || null;
+    const all = [
+      ...PLATFORMS,
+      // island counts as a launch pad for the low platforms
+    ];
+    let unreachable = 0;
+    for (const p of PLATFORMS) {
+      if (p.y < 4.5) continue; // reachable from the island dome
+      let ok = false;
+      for (const q of all) {
+        if (q === p) continue;
+        const dy = p.y - q.y;
+        if (dy <= 0 || dy > MAX_RISE + 0.01) continue;
+        const gap = Math.hypot(p.x - q.x, p.z - q.z) - p.r - q.r;
+        if (gap <= MAX_EDGE_GAP + 0.01) {
+          ok = true;
+          break;
+        }
+      }
+      if (!ok) unreachable++;
     }
     check(
-      "raccoon: glued chaser eventually tags it",
-      !!chaseEv && chaseEv.dog === chaser,
+      `tower: all ${PLATFORMS.length} platforms are reachable`,
+      unreachable === 0,
+      `${unreachable} unreachable`,
     );
     check(
-      "raccoon: tagged raccoon hides (not serialized)",
-      !raccoonSys.serializeAll().some((s) => s.id === raccoon.id),
+      "tower: reaches the summit",
+      PLATFORMS[PLATFORMS.length - 1].y >= MAX_ALTITUDE &&
+        PLATFORMS[PLATFORMS.length - 1].type === P_REST,
     );
+    const rests = PLATFORMS.filter((p) => p.type === P_REST).length;
+    check("tower: has rest rings along the way", rests > 40, `rests=${rests}`);
   }
 
-  // 15) Terrain 2.0: real highground, with gameplay areas kept flat.
+  // 14) Movement: momentum ramps, jumps land on platforms, pads bounce.
   {
-    const summit = groundHeightAt(HOWL_ROCK.x, HOWL_ROCK.z);
-    check(
-      "Sunset Hill summit is proper highground (> 4 m)",
-      summit > 4,
-      `h=${summit.toFixed(2)}`,
-    );
-    const padsFlat = BALL_SPAWNERS.every(
-      (s) => Math.abs(groundHeightAt(s.x, s.z)) < 0.3,
-    );
-    check("ball pads stay flat despite the hills", padsFlat);
-  }
-
-  // 16) Movement momentum: velocity ramps instead of snapping.
-  {
-    const s = createMoveState(0, 12);
+    const s = createMoveState();
     stepMovement(s, { f: true, yaw: 0 }, 1 / 30);
     const v1 = Math.hypot(s.vx, s.vz);
-    check(
-      "momentum: first step is well below walk speed",
-      v1 < WALK_SPEED * 0.6,
-      `v=${v1.toFixed(2)}`,
-    );
+    check("momentum: first step well below walk speed", v1 < WALK_SPEED * 0.6);
     for (let i = 0; i < 40; i++) stepMovement(s, { f: true, yaw: 0 }, 1 / 30);
-    const v2 = Math.hypot(s.vx, s.vz);
     check(
       "momentum: converges to walk speed",
-      Math.abs(v2 - WALK_SPEED) < 0.3,
-      `v=${v2.toFixed(2)}`,
+      Math.abs(Math.hypot(s.vx, s.vz) - WALK_SPEED) < 0.3,
     );
     for (let i = 0; i < 30; i++) stepMovement(s, { yaw: 0 }, 1 / 30);
+    check("momentum: idle blob fully stops", s.vx === 0 && s.vz === 0);
+
+    // jump arc: takeoff flag, apex under 2 m, lands back on the island
+    let ev = stepMovement(s, { jump: true, yaw: 0 }, 1 / 30);
     check(
-      "momentum: idle dog comes to a complete stop",
-      s.vx === 0 && s.vz === 0,
+      "jump: takeoff event + upward velocity",
+      ev.jumped && !s.grounded && s.vy > JUMP_VELOCITY - 1,
+    );
+    let apex = s.y,
+      landed = false,
+      impact = 0;
+    for (let i = 0; i < 90 && !landed; i++) {
+      ev = stepMovement(s, { jump: true, yaw: 0 }, 1 / 30);
+      apex = Math.max(apex, s.y);
+      if (ev.landed) {
+        landed = true;
+        impact = ev.impactVy;
+      }
+    }
+    check(
+      "jump: lands back on the island with impact",
+      landed &&
+        impact < -3 &&
+        Math.abs(s.y - (islandHeightAt(s.x, s.z) ?? 0)) < 0.01,
+    );
+    check("jump: held space does not auto-rejump (latch)", s.grounded === true);
+  }
+
+  {
+    // drop onto a known platform top
+    const p = PLATFORMS.find((q) => q.type !== P_BOUNCY);
+    const s = createMoveState();
+    s.x = p.x;
+    s.z = p.z;
+    s.y = p.y + 2;
+    s.grounded = false;
+    let landed = false;
+    for (let i = 0; i < 60 && !landed; i++) {
+      landed = stepMovement(s, { yaw: 0 }, 1 / 30).landed;
+    }
+    check(
+      "landing: falling body lands exactly on a platform top",
+      landed && s.y === p.y && s.grounded,
+    );
+    const sup = supportAt(s.x, s.y, s.z);
+    check("supportAt agrees with the landing", sup && sup.top === p.y);
+
+    // bouncy pad launches
+    const bp = PLATFORMS.find((q) => q.type === P_BOUNCY);
+    const b = createMoveState();
+    b.x = bp.x;
+    b.z = bp.z;
+    b.y = bp.y + 2;
+    b.grounded = false;
+    let bounced = false;
+    for (let i = 0; i < 60 && !bounced; i++) {
+      bounced = stepMovement(b, { yaw: 0 }, 1 / 30).bounced;
+    }
+    check("bouncy pad: landing launches upward", bounced && b.vy > 8);
+
+    // walking off a platform edge → airborne
+    const w = createMoveState();
+    w.x = p.x;
+    w.z = p.z;
+    w.y = p.y;
+    w.grounded = true;
+    for (let i = 0; i < 90 && w.grounded; i++)
+      stepMovement(w, { f: true, sprint: true, yaw: 0 }, 1 / 30);
+    check(
+      "edges: sprinting off a platform goes airborne",
+      w.grounded === false,
+    );
+
+    // falling into the void → deterministic lift back to the island
+    const v = createMoveState();
+    v.x = 40; // off the island edge
+    v.z = 0;
+    v.y = 0.5;
+    v.grounded = false;
+    let voided = false;
+    for (let i = 0; i < 200 && !voided; i++) {
+      voided = stepMovement(v, { yaw: 0 }, 1 / 30).voided;
+    }
+    check(
+      "void: cloud sea returns the blob to the island",
+      voided &&
+        v.grounded &&
+        Math.hypot(v.x, v.z) < 12 &&
+        Math.abs(v.y - (islandHeightAt(v.x, v.z) ?? -9)) < 0.01,
+    );
+    check("void line sits below the island", VOID_Y < -20);
+
+    // landingAt one-way check: a body already below p's top can never land
+    // on p itself (something lower — like the island — may still catch it)
+    const through = landingAt(p.x, p.y - 1, p.y - 2, p.z);
+    check(
+      "one-way platforms: no landing on a top you're already below",
+      !through || through.top <= p.y - 1,
     );
   }
+
+  // 15) Highscores: floor, dedupe by name, ordering, persistence shape.
+  {
+    const file = path.join(os.tmpdir(), `topple-hs-${Date.now()}.json`);
+    const hs = new Highscores(file);
+    check("highscores: empty board floor is 0", hs.floor() === 0);
+    hs.submit("Zed", 120);
+    hs.submit("Ada", 300);
+    check("highscores: sorted desc", hs.top(2)[0].n === "Ada");
+    const changed = hs.submit("Zed", 90);
+    check("highscores: lower score for same name rejected", changed === false);
+    hs.submit("Zed", 500);
+    check(
+      "highscores: same name improves in place (no duplicates)",
+      hs.top(5).filter((e) => e.n === "Zed").length === 1 &&
+        hs.top(1)[0].alt === 500,
+    );
+    for (let i = 0; i < 12; i++) hs.submit(`p${i}`, 10 + i);
+    check("highscores: board capped at 10", hs.entries.length === 10);
+    fs.rmSync(file, { force: true });
+  }
+
+  // 16) Spawn constant sanity (used by shared movement's void rescue).
+  check(
+    "SPAWN sits on the island",
+    (islandHeightAt(SPAWN.x, SPAWN.z) ?? -1) >= 0,
+  );
 
   // 17) Disconnect propagation: close A, B should get LEAVE.
   const leaveP = B.waitFor(
@@ -582,7 +601,6 @@ try {
   check("B received LEAVE when A disconnected", leave.id === wA.id);
 
   B.ws.close();
-  C.ws.close();
 } catch (err) {
   failures++;
   console.log(`FAIL  ${err.message}`);

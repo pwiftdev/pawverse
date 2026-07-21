@@ -1,29 +1,28 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PAWVERSE</title>
-    <link rel="icon" type="image/jpeg" href="/pawlogo.jpeg" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TOPPLE — how high before you fall?</title>
+    <meta
+      name="description"
+      content="An endless multiplayer climb. One tower, no rounds, no lobbies — the highest blob wears the crown. How high before you fall?"
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%91%91%3C/text%3E%3C/svg%3E"
+    />
     <style>
       :root {
-        --bg: #0a0d14;
-        --panel: rgba(13, 17, 26, 0.78);
-        --panel-hi: rgba(22, 28, 42, 0.85);
-        --card: rgba(24, 30, 46, 0.65);
-        --card-solid: #171c2a;
-        --line: #2b3348;
-        --line-lit: #48546f;
-        --gold: #e9c67a;
-        --gold-deep: #c99b45;
-        --gold-glow: rgba(233, 198, 122, 0.35);
-        --text: #f0f3fa;
-        --dim: #9aa6bd;
-        --faint: #5f6a82;
-        --accent2: #7be8a8;
-        --bad: #ff7070;
-        --sol: #a06bff;
-        --sky: #74bdff;
+        --font:
+          "SF Pro Rounded", ui-rounded, "Segoe UI", system-ui, -apple-system,
+          sans-serif;
+        --card: rgba(12, 16, 30, 0.58);
+        --card-border: rgba(255, 255, 255, 0.09);
+        --text: #f2f5fb;
+        --dim: rgba(242, 245, 251, 0.55);
+        --gold: #ffd166;
+        --accent: #48dbfb;
       }
       * {
         margin: 0;
@@ -32,1908 +31,589 @@
       }
       html,
       body {
+        width: 100%;
         height: 100%;
         overflow: hidden;
-        background: var(--bg);
+        background: #0a0e1c;
+        font-family: var(--font);
         color: var(--text);
-        font-family:
-          "Avenir Next", "SF Pro Display", "Segoe UI", system-ui, sans-serif;
-        -webkit-font-smoothing: antialiased;
+        user-select: none;
+        -webkit-user-select: none;
       }
-      canvas {
-        display: block;
-      }
-      button {
-        font: inherit;
-        color: inherit;
-        cursor: pointer;
-        background: none;
-        border: 0;
-      }
-      input {
-        font: inherit;
-        color: inherit;
-      }
-      ::-webkit-scrollbar {
-        width: 6px;
-      }
-      ::-webkit-scrollbar-thumb {
-        background: var(--line-lit);
-        border-radius: 3px;
-      }
-      ::-webkit-scrollbar-track {
-        background: transparent;
-      }
-
-      /* ── shared chrome: glass panels with gold corner brackets ─────────── */
-      .panel,
-      .hud-card {
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 14px;
-        backdrop-filter: blur(14px);
-        box-shadow:
-          0 14px 44px rgba(0, 0, 0, 0.55),
-          inset 0 1px 0 rgba(255, 255, 255, 0.04);
-      }
-      .ornate {
-        position: relative;
-      }
-      .ornate::before,
-      .ornate::after {
-        content: "";
-        position: absolute;
-        width: 14px;
-        height: 14px;
-        border: 2px solid var(--gold);
-        opacity: 0.65;
-        pointer-events: none;
-      }
-      .ornate::before {
-        top: -2px;
-        left: -2px;
-        border-right: 0;
-        border-bottom: 0;
-        border-radius: 12px 0 0 0;
-      }
-      .ornate::after {
-        bottom: -2px;
-        right: -2px;
-        border-left: 0;
-        border-top: 0;
-        border-radius: 0 0 12px 0;
-      }
-      h3.sec {
-        font-size: 11px;
-        letter-spacing: 2.5px;
-        text-transform: uppercase;
-        color: var(--gold);
-        margin: 0 0 10px;
-        font-weight: 700;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      h3.sec::after {
-        content: "";
-        flex: 1;
-        height: 1px;
-        background: linear-gradient(90deg, var(--gold-glow), transparent);
-      }
-      .opt-label {
-        font-size: 10px;
-        text-transform: uppercase;
-        letter-spacing: 2px;
-        color: var(--dim);
-        margin: 13px 0 7px;
-      }
-
-      /* ═══ LOBBY — full-screen character creator ═══════════════════════════ */
-      #lobby {
+      canvas#game {
         position: fixed;
         inset: 0;
-        z-index: 20;
-      }
-      #preview {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        cursor: grab;
-        background: radial-gradient(
-          900px 620px at 50% 42%,
-          #2c3a5c 0%,
-          #16203a 46%,
-          #0a0d14 82%
-        );
-      }
-      #preview:active {
-        cursor: grabbing;
-      }
-      #lobby .vignette {
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-        background: radial-gradient(
-          120% 90% at 50% 45%,
-          transparent 55%,
-          rgba(4, 6, 10, 0.7) 100%
-        );
-      }
-      /* slow drifting dust motes over the stage */
-      #lobby .motes {
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-        opacity: 0.5;
-        background-image:
-          radial-gradient(2px 2px at 18% 62%, #ffffff2e 40%, transparent 60%),
-          radial-gradient(
-            1.6px 1.6px at 64% 28%,
-            #ffe9b82b 40%,
-            transparent 60%
-          ),
-          radial-gradient(
-            2.4px 2.4px at 82% 70%,
-            #ffffff21 40%,
-            transparent 60%
-          ),
-          radial-gradient(
-            1.4px 1.4px at 38% 18%,
-            #ffffff26 40%,
-            transparent 60%
-          ),
-          radial-gradient(
-            1.8px 1.8px at 50% 82%,
-            #ffe9b81f 40%,
-            transparent 60%
-          );
-        animation: motes 26s linear infinite;
-      }
-      @keyframes motes {
-        from {
-          transform: translateY(0);
-        }
-        to {
-          transform: translateY(-140px);
-        }
-      }
-
-      #lobby-top {
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 20px 26px;
-        z-index: 3;
-      }
-      .logo {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-      }
-      .brand-mark {
-        width: 54px;
-        height: 54px;
-        border-radius: 15px;
-        object-fit: cover;
-        border: 1px solid rgba(233, 198, 122, 0.6);
-        box-shadow:
-          0 8px 24px rgba(0, 0, 0, 0.4),
-          0 0 18px var(--gold-glow);
-      }
-      .logo-copy {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 3px;
-      }
-      .logo strong {
-        font-size: 26px;
-        font-weight: 800;
-        letter-spacing: 4px;
-        background: linear-gradient(
-          100deg,
-          #fff 10%,
-          var(--gold) 50%,
-          #ffb86b 75%,
-          #fff 95%
-        );
-        background-size: 200% 100%;
-        -webkit-background-clip: text;
-        background-clip: text;
-        color: transparent;
-        animation: shimmer 7s ease infinite;
-        filter: drop-shadow(0 2px 12px rgba(233, 198, 122, 0.25));
-      }
-      .logo em {
-        font-size: 10px;
-        font-style: normal;
-        letter-spacing: 3px;
-        color: var(--dim);
-        -webkit-text-fill-color: var(--dim);
-      }
-      @keyframes shimmer {
-        0%,
-        100% {
-          background-position: 0% 0;
-        }
-        50% {
-          background-position: 100% 0;
-        }
-      }
-      #wallet-btn {
-        background: linear-gradient(135deg, #2a1b4e, #1a1233);
-        border: 1px solid var(--sol);
-        color: #d4bdff;
-        padding: 10px 18px;
-        border-radius: 12px;
-        font-size: 13px;
-        font-weight: 600;
-        transition: all 0.15s;
-        box-shadow: 0 0 18px rgba(160, 107, 255, 0.18);
-      }
-      #wallet-btn:hover {
-        filter: brightness(1.25);
-        transform: translateY(-1px);
-      }
-      .lobby-actions {
-        display: flex;
-        align-items: center;
-        gap: 9px;
-      }
-      .top-badge,
-      .social-link {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        height: 40px;
-        border-radius: 12px;
-        backdrop-filter: blur(12px);
-        font-size: 13px;
-        font-weight: 800;
-        text-decoration: none;
-        transition:
-          transform 0.15s,
-          border-color 0.15s,
-          filter 0.15s;
-      }
-      .top-badge {
-        padding: 0 15px;
-        color: #241a05;
-        letter-spacing: 1px;
-        background: linear-gradient(135deg, var(--gold), var(--gold-deep));
-        border: 1px solid rgba(255, 255, 255, 0.24);
-        box-shadow: 0 0 18px var(--gold-glow);
-      }
-      .social-link {
-        width: 40px;
-        color: var(--text);
-        background: var(--panel);
-        border: 1px solid var(--line-lit);
-        font-size: 16px;
-      }
-      .social-link:hover {
-        color: var(--gold);
-        border-color: var(--gold);
-        transform: translateY(-1px);
-      }
-
-      /* rails */
-      .rail {
-        position: absolute;
-        top: 84px;
-        bottom: 108px;
-        width: 304px;
-        padding: 18px;
-        overflow-y: auto;
-        z-index: 2;
-      }
-      #rail-left {
-        left: 22px;
-      }
-      #rail-right {
-        right: 22px;
-      }
-      .rail section + section {
-        margin-top: 22px;
-        padding-top: 18px;
-        border-top: 1px solid var(--line);
-      }
-
-      /* breed cards */
-      .species-tabs {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 6px;
-        margin-bottom: 12px;
-      }
-      .species-btn {
-        padding: 8px 5px;
-        border: 1px solid var(--line);
-        border-radius: 9px;
-        background: var(--card);
-        color: var(--dim);
-        font-size: 10px;
-        font-weight: 800;
-        letter-spacing: 0.8px;
-        text-transform: uppercase;
-        transition: all 0.15s;
-      }
-      .species-btn:hover,
-      .species-btn.sel {
-        color: var(--gold);
-        border-color: var(--gold);
-        background: rgba(233, 198, 122, 0.1);
-      }
-      .breeds {
-        display: flex;
-        flex-direction: column;
-        gap: 7px;
-      }
-      .breed {
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        background: var(--card);
-        padding: 9px 12px;
-        text-align: left;
-        transition: all 0.15s;
-        position: relative;
-      }
-      .breed:hover {
-        border-color: var(--line-lit);
-        background: var(--panel-hi);
-        transform: translateX(3px);
-      }
-      .breed.sel {
-        border-color: var(--gold);
-        background: linear-gradient(
-          160deg,
-          rgba(233, 198, 122, 0.12),
-          rgba(233, 198, 122, 0.03)
-        );
-        box-shadow:
-          0 0 16px var(--gold-glow),
-          inset 0 0 0 1px var(--gold);
-      }
-      .breed.locked {
-        opacity: 0.42;
-      }
-      .breed .b-top {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 6px;
-      }
-      .breed .b-dot {
-        width: 20px;
-        height: 20px;
-        border-radius: 50%;
-        border: 2px solid #ffffff26;
-        flex: none;
-        box-shadow: 0 0 8px rgba(0, 0, 0, 0.4) inset;
-      }
-      .breed .b-name {
-        font-size: 13px;
-        font-weight: 700;
-        flex: 1;
-        letter-spacing: 0.3px;
-      }
-      .breed .b-gem {
-        font-size: 12px;
-      }
-      .breed .b-stat {
-        display: flex;
-        align-items: center;
-        gap: 7px;
-        margin-top: 3px;
-      }
-      .breed .b-stat span {
-        font-size: 8.5px;
-        color: var(--dim);
-        width: 32px;
-        text-transform: uppercase;
-        letter-spacing: 1.2px;
-      }
-      .breed .b-bar {
-        flex: 1;
-        height: 4px;
-        border-radius: 2px;
-        background: #0a0d15;
-        overflow: hidden;
-      }
-      .breed .b-bar > i {
         display: block;
-        height: 100%;
-        border-radius: 2px;
-        background: linear-gradient(90deg, var(--sky), var(--accent2));
       }
 
-      /* swatches / chips / range */
-      .swatches {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 7px;
-        align-items: center;
-      }
-      .swatch {
-        width: 29px;
-        height: 29px;
-        border-radius: 9px;
-        border: 2px solid transparent;
-        outline: 1px solid #ffffff1e;
-        transition: transform 0.12s;
-      }
-      .swatch:hover {
-        transform: scale(1.14);
-      }
-      .swatch.sel {
-        border-color: var(--gold);
-        box-shadow: 0 0 10px var(--gold-glow);
-      }
-      input[type="color"] {
-        width: 29px;
-        height: 29px;
-        border: 1px dashed var(--line-lit);
-        border-radius: 9px;
-        background: none;
-        padding: 2px;
-        cursor: pointer;
-      }
-      .row {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        flex-wrap: wrap;
-      }
-      .chip {
-        padding: 7px 13px;
-        border-radius: 999px;
-        border: 1px solid var(--line);
-        background: var(--card);
-        font-size: 12px;
-        transition: all 0.12s;
-      }
-      .chip:hover {
-        border-color: var(--line-lit);
-      }
-      .chip.sel {
-        border-color: var(--gold);
-        background: rgba(233, 198, 122, 0.1);
-        color: var(--gold);
-      }
-      input[type="range"] {
-        accent-color: var(--gold);
-        width: 100%;
-      }
-      #wallet-status {
-        font-size: 12px;
-        color: var(--dim);
-        line-height: 1.65;
-        margin-top: 8px;
-      }
-      #wallet-status b {
-        color: var(--accent2);
-      }
-      #mint-btn {
-        border: 1px dashed var(--line-lit);
-        color: var(--dim);
-        padding: 8px 13px;
-        border-radius: 10px;
-        font-size: 12px;
-        margin-top: 10px;
-      }
-      #mint-btn:hover {
-        color: var(--text);
-        border-color: var(--gold);
-      }
-      .wallet-note {
-        font-size: 10.5px;
-        color: var(--faint);
-        margin-top: 10px;
-        line-height: 1.6;
-      }
-
-      /* pose picker — floats over the stage bottom-left of center */
-      #pose-row {
-        position: absolute;
-        bottom: 118px;
-        left: 50%;
-        transform: translateX(-50%);
-        display: flex;
-        gap: 8px;
-        z-index: 2;
-      }
-      .pose-btn {
-        width: 44px;
-        height: 44px;
-        border-radius: 50%;
-        border: 1px solid var(--line);
-        background: var(--panel);
-        backdrop-filter: blur(10px);
-        font-size: 19px;
-        transition: all 0.15s;
-      }
-      .pose-btn:hover {
-        border-color: var(--line-lit);
-        transform: translateY(-3px);
-      }
-      .pose-btn.sel {
-        border-color: var(--gold);
-        box-shadow: 0 0 14px var(--gold-glow);
-      }
-
-      /* bottom bar */
-      #lobby-bottom {
-        position: absolute;
-        left: 50%;
-        bottom: 26px;
-        transform: translateX(-50%);
-        display: flex;
-        gap: 10px;
-        align-items: center;
-        z-index: 3;
-      }
-      #dogname {
-        background: var(--panel);
-        border: 1px solid var(--line);
-        backdrop-filter: blur(12px);
-        border-radius: 13px;
-        padding: 14px 18px;
-        width: 240px;
-        outline: none;
-        font-size: 15px;
-        transition:
-          border 0.15s,
-          box-shadow 0.15s;
-      }
-      #dogname:focus {
-        border-color: var(--gold);
-        box-shadow: 0 0 14px var(--gold-glow);
-      }
-      #randomize {
-        width: 52px;
-        height: 52px;
-        border-radius: 13px;
-        border: 1px solid var(--line);
-        background: var(--panel);
-        backdrop-filter: blur(12px);
-        font-size: 21px;
-        transition: all 0.15s;
-      }
-      #randomize:hover {
-        border-color: var(--gold);
-        transform: rotate(24deg) scale(1.06);
-      }
-      #play {
-        background: linear-gradient(135deg, var(--gold), var(--gold-deep));
-        color: #241a05;
-        font-weight: 800;
-        font-size: 17px;
-        letter-spacing: 1.8px;
-        padding: 15px 46px;
-        border-radius: 14px;
-        position: relative;
-        overflow: hidden;
-        box-shadow:
-          0 6px 30px var(--gold-glow),
-          inset 0 1px 0 rgba(255, 255, 255, 0.35);
-        transition: all 0.15s;
-      }
-      #play::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background: linear-gradient(
-          100deg,
-          transparent 30%,
-          rgba(255, 255, 255, 0.35) 50%,
-          transparent 70%
-        );
-        transform: translateX(-120%);
-        animation: sheen 3.4s ease infinite;
-      }
-      @keyframes sheen {
-        0%,
-        55% {
-          transform: translateX(-120%);
-        }
-        85%,
-        100% {
-          transform: translateX(120%);
-        }
-      }
-      #play:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 10px 40px var(--gold-glow);
-      }
-
-      /* ═══ HUD — MMO-grade ═════════════════════════════════════════════════ */
+      /* ── HUD chrome ─────────────────────────────────────────────── */
       #hud {
         position: fixed;
         inset: 0;
-        z-index: 10;
         pointer-events: none;
         display: none;
       }
-      #hud::before {
-        content: "";
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-        background: radial-gradient(
-          circle at center,
-          transparent 58%,
-          rgba(7, 12, 20, 0.2) 100%
-        );
-      }
-
-      #hud-brand {
-        position: absolute;
-        top: 16px;
-        left: 296px;
-        display: flex;
-        align-items: center;
-        gap: 9px;
-        padding: 7px 12px 7px 7px;
-      }
-      #hud-brand img {
-        width: 36px;
-        height: 36px;
-        border-radius: 10px;
-        object-fit: cover;
-        border: 1px solid rgba(233, 198, 122, 0.5);
-      }
-      #hud-brand strong,
-      #hud-brand small {
+      #hud.on {
         display: block;
       }
-      #hud-brand strong {
-        color: var(--gold);
-        font-size: 11px;
-        letter-spacing: 2px;
-      }
-      #hud-brand small {
-        color: var(--faint);
-        font-size: 8px;
-        letter-spacing: 1.4px;
-        margin-top: 2px;
-      }
-
-      /* — unit frame (top-left) — */
-      #unit-frame {
-        position: absolute;
-        top: 16px;
-        left: 16px;
-        display: flex;
-        gap: 12px;
-        padding: 12px 16px 12px 12px;
-        min-width: 264px;
-        align-items: center;
-      }
-      #uf-portrait {
-        width: 58px;
-        height: 58px;
-        border-radius: 50%;
-        flex: none;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 30px;
-        background: radial-gradient(circle at 35% 30%, #2c3550, #12151f);
-        border: 2px solid var(--gold);
-        box-shadow:
-          0 0 16px var(--gold-glow),
-          inset 0 0 12px rgba(0, 0, 0, 0.6);
-      }
-      .uf-body {
-        flex: 1;
-        min-width: 0;
-      }
-      .uf-top {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        gap: 10px;
-        margin-bottom: 6px;
-      }
-      #uf-name {
-        font-weight: 800;
-        font-size: 15px;
-        letter-spacing: 0.5px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      #rep-label {
-        font-size: 10px;
-        color: var(--gold);
-        letter-spacing: 1px;
-        text-transform: uppercase;
-        white-space: nowrap;
-      }
-      .bar {
-        position: relative;
-        height: 12px;
-        border-radius: 6px;
-        background: #0a0d15;
-        border: 1px solid var(--line);
-        overflow: hidden;
-        margin-bottom: 5px;
-      }
-      .bar > div {
-        height: 100%;
-        border-radius: 6px;
-        transition: width 0.35s;
-      }
-      #happy-fill {
-        background: linear-gradient(90deg, #ffd166, #7be8a8);
-        width: 50%;
-        box-shadow: 0 0 10px rgba(123, 232, 168, 0.4);
-      }
-      #life-wrap {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin: 5px 0;
-        color: var(--faint);
-        font-size: 8px;
-        letter-spacing: 1px;
-        text-transform: uppercase;
-      }
-      #life-wrap[hidden] {
-        display: none;
-      }
-      #life-pips {
-        display: flex;
-        gap: 4px;
-      }
-      #life-pips i {
-        width: 24px;
-        height: 5px;
-        border-radius: 3px;
-        background: #252a35;
-        border: 1px solid var(--line);
-      }
-      #life-pips i.full {
-        background: var(--bad);
-        box-shadow: 0 0 6px rgba(255, 100, 100, 0.35);
-      }
-      .bar.rep {
-        height: 7px;
-      }
-      #rep-fill {
-        background: linear-gradient(90deg, var(--bad), #ffd166, var(--accent2));
-        width: 100%;
-      }
-      #rep-dot {
-        position: absolute;
-        top: -2px;
-        width: 4px;
-        height: 11px;
-        background: #fff;
-        border-radius: 2px;
-        left: 50%;
-        transition: left 0.3s;
-        box-shadow: 0 0 6px #000;
-      }
-      .uf-chips {
-        display: flex;
-        gap: 8px;
-        margin-top: 7px;
-      }
-      .chip-stat {
-        font-size: 12px;
+      .card {
         background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        padding: 3px 11px;
-        color: var(--dim);
-      }
-      .chip-stat b {
-        color: var(--gold);
-        font-variant-numeric: tabular-nums;
-      }
-      #needs {
-        display: grid;
-        grid-template-columns: 44px 1fr;
-        gap: 3px 7px;
-        margin-top: 7px;
-        align-items: center;
-      }
-      #needs label {
-        color: var(--faint);
-        font-size: 8px;
-        letter-spacing: 1px;
-        text-transform: uppercase;
-      }
-      .need {
-        height: 4px;
-        background: #090c13;
-        border-radius: 3px;
-        overflow: hidden;
-      }
-      .need i {
-        display: block;
-        height: 100%;
-        width: 50%;
-        border-radius: inherit;
-        transition: width 0.4s;
-      }
-      #need-play {
-        background: #ffd166;
-      }
-      #need-social {
-        background: #9ad1ff;
-      }
-      #need-explore {
-        background: #7be8a8;
-      }
-      #mood-label {
-        grid-column: 1 / -1;
-        color: var(--dim);
-        font-size: 9px;
-        letter-spacing: 1px;
+        border: 1px solid var(--card-border);
+        border-radius: 14px;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
       }
 
-      #park-event {
+      /* Altitude readout */
+      #altwrap {
         position: absolute;
         top: 16px;
         left: 50%;
         transform: translateX(-50%);
-        width: 280px;
-        padding: 10px 14px;
         text-align: center;
-        display: none;
+        padding: 8px 26px 12px;
       }
-      #park-name {
-        color: var(--gold);
-        font-size: 11px;
-        letter-spacing: 1.5px;
-        text-transform: uppercase;
+      #alt {
+        font-size: 44px;
+        font-weight: 800;
+        line-height: 1;
+        letter-spacing: -1px;
+        background: linear-gradient(180deg, #fff, #9fd8ff);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
       }
-      #park-time {
-        color: var(--dim);
-        font-size: 10px;
-        margin-top: 5px;
+      #alt small {
+        font-size: 20px;
+        font-weight: 700;
+        -webkit-text-fill-color: #9fd8ff;
       }
-      #park-meter {
-        height: 5px;
-        background: #090c13;
-        border-radius: 4px;
-        margin-top: 7px;
+      #bestbar {
+        width: 150px;
+        height: 4px;
+        border-radius: 2px;
+        background: rgba(255, 255, 255, 0.15);
+        margin: 7px auto 4px;
         overflow: hidden;
       }
-      #park-progress {
-        width: 0;
+      #bestfill {
         height: 100%;
-        background: linear-gradient(90deg, var(--sky), var(--accent2));
-        transition: width 0.35s;
+        width: 0%;
+        border-radius: 2px;
+        background: linear-gradient(90deg, var(--accent), var(--gold));
+        transition: width 0.3s;
       }
-
-      #journal {
-        position: absolute;
-        top: 150px;
-        left: 16px;
-        width: 264px;
-        padding: 14px;
-        opacity: 0;
-        transform: translateX(-18px);
-        transition:
-          opacity 0.18s,
-          transform 0.18s;
-        pointer-events: none;
-      }
-      #journal.open {
-        opacity: 1;
-        transform: none;
-      }
-      #journal h4 {
-        color: var(--gold);
+      #best {
         font-size: 11px;
-        letter-spacing: 2px;
-        text-transform: uppercase;
-      }
-      #journal-level {
-        font-size: 17px;
-        font-weight: 800;
-        margin-top: 9px;
-      }
-      #journal-xp,
-      #journal-discoveries,
-      #journal-events {
+        font-weight: 700;
         color: var(--dim);
-        font-size: 11px;
-        margin-top: 5px;
+        letter-spacing: 1.5px;
+      }
+      #best b {
+        color: var(--gold);
       }
 
-      /* — minimap (top-right, circular) — */
-      #conn-status {
+      /* Leaderboard */
+      #board {
         position: absolute;
         top: 16px;
-        right: 216px;
-        font-size: 11.5px;
-        color: var(--dim);
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 9px;
-        padding: 6px 11px;
-        backdrop-filter: blur(8px);
-      }
-      #conn-status.bad {
-        color: var(--bad);
-      }
-      #map-wrap {
-        position: absolute;
-        top: 16px;
-        right: 16px;
-        width: 184px;
-        height: 184px;
-      }
-      #minimap {
-        width: 184px;
-        height: 184px;
-        border-radius: 50%;
-      }
-      #map-ring {
-        position: absolute;
-        inset: -3px;
-        border-radius: 50%;
-        pointer-events: none;
-        border: 2px solid var(--gold);
-        opacity: 0.8;
-        box-shadow:
-          0 0 22px rgba(0, 0, 0, 0.6),
-          0 0 14px var(--gold-glow),
-          inset 0 0 18px rgba(0, 0, 0, 0.65);
-      }
-      #map-n {
-        position: absolute;
-        top: -1px;
-        left: 50%;
-        transform: translate(-50%, -55%);
-        background: var(--card-solid);
-        border: 1px solid var(--gold);
-        color: var(--gold);
-        font-size: 9px;
-        font-weight: 800;
-        width: 18px;
-        height: 18px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        letter-spacing: 0;
-      }
-
-      /* — quest tracker (right, under map) — */
-      #tracker {
-        position: absolute;
-        top: 218px;
         right: 16px;
         width: 208px;
         padding: 12px 14px;
-        pointer-events: auto;
-        max-height: calc(100vh - 320px);
-        overflow-y: auto;
+        font-size: 13px;
       }
-      #tracker h4 {
-        font-size: 10.5px;
+      #board h3 {
+        font-size: 10px;
         letter-spacing: 2px;
-        color: var(--gold);
-        text-transform: uppercase;
-        margin-bottom: 7px;
-        display: flex;
-        align-items: center;
-        gap: 7px;
+        color: var(--dim);
+        margin: 2px 0 6px;
       }
-      #tracker h4::after {
-        content: "";
-        flex: 1;
-        height: 1px;
-        background: linear-gradient(90deg, var(--gold-glow), transparent);
-      }
-      .lb-row {
+      #board .row {
         display: flex;
         justify-content: space-between;
-        font-size: 12px;
-        margin-bottom: 4px;
         gap: 8px;
+        padding: 2px 0;
+        font-weight: 600;
       }
-      .lb-row .n {
+      #board .row .n {
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        color: var(--dim);
       }
-      .lb-row .z {
-        color: var(--gold);
+      #board .row .a {
+        color: var(--accent);
         font-variant-numeric: tabular-nums;
       }
-      .lb-row.me .n {
-        color: var(--accent2);
-        font-weight: 700;
-      }
-      #lb-rank {
-        font-size: 10.5px;
-        color: var(--faint);
-        text-align: right;
-        margin: 2px 0 4px;
-      }
-      #obj-head {
-        cursor: pointer;
-        margin-top: 10px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-      }
-      #obj-head:hover h4 {
-        color: #fff;
-      }
-      #obj-count {
-        font-size: 10px;
-        color: var(--dim);
-      }
-      #obj-list {
-        margin-top: 6px;
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-      #obj-list.hidden {
-        display: none;
-      }
-      .obj {
-        font-size: 11.5px;
-        color: var(--dim);
-        display: flex;
-        gap: 7px;
-        align-items: center;
-      }
-      .obj .tick {
-        width: 14px;
-        height: 14px;
-        border-radius: 4px;
-        border: 1px solid var(--line-lit);
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 9px;
-        flex: none;
-      }
-      .obj.done {
-        color: var(--accent2);
-        text-shadow: 0 0 8px rgba(123, 232, 168, 0.4);
-      }
-      .obj.done .tick {
-        background: rgba(123, 232, 168, 0.15);
-        border-color: var(--accent2);
-      }
-
-      /* — chat (bottom-right) — */
-      #chat-log {
-        position: absolute;
-        right: 20px;
-        bottom: 22px;
-        width: min(440px, calc(100vw - 40px));
-        max-height: 240px;
-        overflow: hidden;
-        display: flex;
-        flex-direction: column;
-        justify-content: flex-end;
-        gap: 6px;
-        font-size: 14px;
-        text-shadow: 0 1px 3px #000;
-      }
-      .chat-line {
-        padding: 7px 11px;
-        background: rgba(10, 13, 21, 0.72);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 9px;
-        backdrop-filter: blur(8px);
-        animation: chatIn 0.2s ease;
-        line-height: 1.45;
-        transition: opacity 1.2s;
-        overflow-wrap: anywhere;
-      }
-      .chat-line b {
+      #board .row.me .n {
         color: var(--gold);
       }
-      .chat-line.me b {
-        color: var(--accent2);
+      #board .row.lead .n::before {
+        content: "👑 ";
       }
-      @keyframes chatIn {
-        from {
-          opacity: 0;
-          transform: translateX(-8px);
-        }
-      }
-      #chat-wrap {
-        position: absolute;
-        right: 20px;
-        bottom: 22px;
-        width: min(440px, calc(100vw - 40px));
-        display: none;
-        pointer-events: auto;
-      }
-      #chat-input {
-        width: 100%;
-        background: var(--panel);
-        border: 1px solid var(--gold);
-        backdrop-filter: blur(10px);
-        border-radius: 11px;
-        padding: 14px 16px;
-        font-size: 14px;
-        outline: none;
-        box-shadow: 0 0 16px var(--gold-glow);
-      }
-      #chat-wrap.open ~ #chat-log {
-        bottom: 82px;
-      }
-
-      /* — action bar (bottom-center) — */
-      #action-wrap {
-        position: absolute;
-        left: 50%;
-        bottom: 16px;
-        transform: translateX(-50%);
-        display: flex;
-        align-items: flex-end;
-        gap: 8px;
-        pointer-events: auto;
-      }
-      #emote-bar {
-        display: grid;
-        grid-template-columns: repeat(7, 48px);
-        gap: 6px;
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        padding: 8px 10px;
-        backdrop-filter: blur(14px);
-        box-shadow:
-          0 12px 36px rgba(0, 0, 0, 0.5),
-          inset 0 1px 0 rgba(255, 255, 255, 0.05);
-      }
-      .emote-btn {
-        width: 48px;
-        height: 56px;
-        border-radius: 11px;
-        position: relative;
-        background: linear-gradient(180deg, var(--card), #10141f);
-        border: 1px solid var(--line);
-        transition: all 0.13s;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 2px;
-      }
-      .emote-btn .ico {
-        font-size: 19px;
-        line-height: 1;
-      }
-      .emote-btn .ico.word {
-        font-size: 9px;
-        font-weight: 800;
-        letter-spacing: 0.6px;
-      }
-      .emote-btn .key {
-        font-size: 8.5px;
-        color: var(--dim);
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        padding: 0 4px;
-        letter-spacing: 0.5px;
-        background: #0c0f18;
-      }
-      .emote-btn:hover {
-        transform: translateY(-4px);
-        border-color: var(--gold);
-        box-shadow:
-          0 6px 18px rgba(0, 0, 0, 0.5),
-          0 0 12px var(--gold-glow);
-      }
-      .emote-btn:disabled {
-        opacity: 0.35;
-        cursor: not-allowed;
-        transform: none;
-        border-color: var(--line);
-        box-shadow: none;
-      }
-      .emote-btn:hover .key {
+      #board .all .a {
         color: var(--gold);
-        border-color: var(--gold);
       }
-      .emote-btn::after {
-        content: attr(data-label);
-        position: absolute;
-        bottom: 64px;
-        left: 50%;
-        transform: translateX(-50%);
-        font-size: 10px;
-        color: var(--text);
-        background: var(--card-solid);
-        padding: 4px 9px;
-        border-radius: 6px;
-        white-space: nowrap;
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity 0.15s;
-        border: 1px solid var(--line-lit);
-      }
-      .emote-btn:hover::after {
-        opacity: 1;
-      }
-      #help-btn {
-        width: 34px;
-        height: 34px;
-        border-radius: 50%;
-        border: 1px solid var(--line);
-        background: var(--panel);
-        backdrop-filter: blur(10px);
-        font-size: 14px;
+      #board #rank {
+        margin-top: 7px;
+        padding-top: 7px;
+        border-top: 1px solid var(--card-border);
+        font-size: 11px;
         color: var(--dim);
-        margin-bottom: 11px;
-        transition: all 0.13s;
-      }
-      #help-btn:hover {
-        color: var(--gold);
-        border-color: var(--gold);
-      }
-      #hint-panel {
-        position: absolute;
-        bottom: 145px;
-        right: -8px;
-        width: 300px;
-        padding: 12px 15px;
-        font-size: 11.5px;
-        color: var(--dim);
-        line-height: 1.9;
-        display: none;
-        text-align: left;
-      }
-      #hint-panel.open {
-        display: block;
-      }
-      #hint-panel kbd {
-        background: #262e42;
-        border-radius: 4px;
-        padding: 1px 6px;
-        color: var(--gold);
-        font-family: inherit;
-        font-size: 10px;
-      }
-
-      /* — throw power — */
-      #power-wrap {
-        position: absolute;
-        left: 50%;
-        bottom: 160px;
-        transform: translateX(-50%);
-        width: 220px;
-        display: none;
-      }
-      #power-wrap .pmeter {
-        height: 12px;
-        border-radius: 7px;
-        background: #0a0d15;
-        border: 1px solid var(--gold);
-        overflow: hidden;
-        box-shadow: 0 0 14px var(--gold-glow);
-      }
-      #power-fill {
-        height: 100%;
-        background: linear-gradient(90deg, #7be8a8, #ffd166, #ff7070);
-        width: 0%;
-        border-radius: 7px;
-      }
-      #power-wrap p {
         text-align: center;
-        font-size: 10.5px;
-        color: var(--dim);
-        margin-top: 4px;
         letter-spacing: 1px;
-        text-transform: uppercase;
       }
 
-      /* — toasts — */
-      #toasts {
+      /* Event feed */
+      #feed {
         position: absolute;
-        left: 50%;
-        top: 17%;
-        transform: translateX(-50%);
+        left: 16px;
+        top: 16px;
+        width: 260px;
         display: flex;
         flex-direction: column;
-        align-items: center;
-        gap: 7px;
+        gap: 5px;
+        font-size: 12.5px;
+        font-weight: 600;
       }
-      .toast {
-        background: var(--panel);
-        border: 1px solid var(--line);
-        padding: 9px 22px;
-        border-radius: 999px;
-        font-size: 14.5px;
-        animation: toast 2.5s forwards;
-        white-space: nowrap;
-        backdrop-filter: blur(10px);
-        box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5);
+      #feed .line {
+        padding: 6px 11px;
+        border-radius: 10px;
+        background: rgba(12, 16, 30, 0.5);
+        border: 1px solid var(--card-border);
+        opacity: 0;
+        transform: translateX(-8px);
+        animation: feedin 0.25s forwards;
+        transition: opacity 0.6s;
       }
-      .toast.good {
-        color: var(--accent2);
-        border-color: rgba(123, 232, 168, 0.4);
-        box-shadow:
-          0 8px 26px rgba(0, 0, 0, 0.5),
-          0 0 18px rgba(123, 232, 168, 0.15);
+      #feed .line.gold {
+        border-color: rgba(255, 209, 102, 0.5);
+        color: var(--gold);
       }
-      .toast.bad {
-        color: var(--bad);
-        border-color: #5a2e2e;
-      }
-      @keyframes toast {
-        0% {
-          opacity: 0;
-          transform: translateY(10px) scale(0.94);
-        }
-        12% {
+      @keyframes feedin {
+        to {
           opacity: 1;
           transform: none;
         }
-        80% {
+      }
+
+      /* Toasts + milestone flash */
+      #toasts {
+        position: absolute;
+        top: 24%;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+      }
+      .toast {
+        padding: 10px 22px;
+        border-radius: 999px;
+        font-size: 17px;
+        font-weight: 800;
+        background: var(--card);
+        border: 1px solid var(--card-border);
+        backdrop-filter: blur(8px);
+        animation: toastin 0.3s cubic-bezier(0.2, 1.6, 0.4, 1);
+        white-space: nowrap;
+      }
+      .toast.gold {
+        color: var(--gold);
+        border-color: rgba(255, 209, 102, 0.6);
+        box-shadow: 0 0 30px rgba(255, 209, 102, 0.25);
+      }
+      .toast.bad {
+        color: #ff8080;
+        border-color: rgba(255, 107, 107, 0.5);
+      }
+      @keyframes toastin {
+        from {
+          opacity: 0;
+          transform: scale(0.7) translateY(10px);
+        }
+      }
+      #milestone {
+        position: absolute;
+        top: 38%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 84px;
+        font-weight: 900;
+        letter-spacing: -2px;
+        opacity: 0;
+        pointer-events: none;
+        background: linear-gradient(180deg, #fff, var(--gold));
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        filter: drop-shadow(0 4px 24px rgba(255, 209, 102, 0.45));
+      }
+      #milestone.pop {
+        animation: milepop 1.4s cubic-bezier(0.2, 1.4, 0.4, 1) forwards;
+      }
+      @keyframes milepop {
+        0% {
+          opacity: 0;
+          transform: translate(-50%, -50%) scale(0.4);
+        }
+        18% {
           opacity: 1;
+          transform: translate(-50%, -50%) scale(1.06);
+        }
+        70% {
+          opacity: 1;
+          transform: translate(-50%, -50%) scale(1);
         }
         100% {
           opacity: 0;
-          transform: translateY(-16px);
+          transform: translate(-50%, -62%) scale(0.98);
         }
       }
 
-      #click-to-play {
+      /* Player labels (world-projected) */
+      #labels {
         position: absolute;
         inset: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 15px;
-        color: var(--dim);
-        background: #00000066;
-        pointer-events: auto;
-        cursor: pointer;
-        backdrop-filter: blur(2px);
+        overflow: hidden;
       }
-      #click-to-play div {
-        background: var(--panel);
-        border: 1px solid var(--gold);
-        padding: 16px 30px;
-        border-radius: 14px;
-        box-shadow: 0 0 24px var(--gold-glow);
+      .label {
+        position: absolute;
+        transform: translate(-50%, -100%);
+        text-align: center;
+        font-size: 12px;
+        font-weight: 700;
+        text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+        white-space: nowrap;
+        will-change: transform;
+      }
+      .label .la {
+        font-size: 10.5px;
+        color: rgba(255, 255, 255, 0.75);
+        font-weight: 600;
+      }
+      .label.lead {
+        color: var(--gold);
+      }
+      .label .bubble {
+        display: inline-block;
+        max-width: 220px;
+        white-space: normal;
+        background: rgba(255, 255, 255, 0.94);
+        color: #1c2333;
+        font-weight: 600;
+        border-radius: 12px;
+        padding: 5px 10px;
+        margin-bottom: 3px;
+        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
       }
 
-      .welcome-overlay {
+      /* Controls hint + chat */
+      #hint {
+        position: absolute;
+        bottom: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 12px;
+        color: var(--dim);
+        padding: 8px 18px;
+        letter-spacing: 0.4px;
+        transition: opacity 1.2s;
+      }
+      #hint b {
+        color: var(--text);
+      }
+      #chatbar {
+        position: absolute;
+        bottom: 58px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: none;
+        pointer-events: auto;
+      }
+      #chatbar.on {
+        display: block;
+      }
+      #chatinput {
+        width: 320px;
+        padding: 10px 16px;
+        border-radius: 999px;
+        border: 1px solid var(--card-border);
+        background: rgba(12, 16, 30, 0.8);
+        color: var(--text);
+        font-family: var(--font);
+        font-size: 14px;
+        outline: none;
+      }
+      #conn {
+        position: absolute;
+        bottom: 16px;
+        right: 16px;
+        font-size: 11px;
+        color: #ff9f43;
+        font-weight: 700;
+        letter-spacing: 1px;
+        display: none;
+      }
+      #conn.on {
+        display: block;
+      }
+
+      /* ── Join overlay ───────────────────────────────────────────── */
+      #join {
         position: fixed;
         inset: 0;
-        z-index: 60;
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 24px;
         background:
           radial-gradient(
-            circle at 50% 35%,
-            rgba(44, 58, 92, 0.6),
-            transparent 55%
+            120% 90% at 50% 110%,
+            rgba(72, 219, 251, 0.14),
+            transparent 60%
           ),
-          rgba(5, 8, 14, 0.88);
-        backdrop-filter: blur(12px);
+          linear-gradient(180deg, #0a0e1c 0%, #131a33 60%, #1c2547 100%);
+        z-index: 10;
+        transition: opacity 0.5s;
       }
-      .welcome-overlay[hidden] {
-        display: none;
+      #join.off {
+        opacity: 0;
+        pointer-events: none;
       }
-      .welcome-card {
-        width: min(680px, 100%);
-        padding: 26px;
+      #join .panel {
+        width: min(400px, 92vw);
+        padding: 34px 34px 28px;
         text-align: center;
-        background: rgba(15, 20, 31, 0.96);
       }
-      .welcome-card .brand-mark {
-        width: 82px;
-        height: 82px;
+      #logo {
+        font-size: 58px;
+        font-weight: 900;
+        letter-spacing: 3px;
+        line-height: 1;
+        background: linear-gradient(
+          180deg,
+          #fff 20%,
+          var(--accent) 70%,
+          #a29bfe
+        );
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        filter: drop-shadow(0 6px 30px rgba(72, 219, 251, 0.35));
       }
-      .welcome-card h2 {
-        margin-top: 14px;
-        color: var(--gold);
-        font-size: 25px;
-        letter-spacing: 1.2px;
-      }
-      .welcome-lead {
-        max-width: 500px;
-        margin: 8px auto 0;
+      #tag {
+        margin: 8px 0 24px;
         color: var(--dim);
         font-size: 14px;
-        line-height: 1.6;
+        font-weight: 600;
+        letter-spacing: 0.6px;
       }
-      #tutorial-role {
-        max-width: 570px;
-        margin: 18px auto 0;
-        padding: 14px 18px;
-        border: 1px solid var(--line-lit);
-        border-radius: 13px;
-        background: rgba(255, 255, 255, 0.035);
-        text-align: left;
-      }
-      #tutorial-role[data-role="hunter"] {
-        border-color: rgba(255, 209, 102, 0.5);
-        box-shadow: inset 3px 0 0 var(--gold);
-      }
-      #tutorial-role[data-role="runner"] {
-        border-color: rgba(123, 232, 168, 0.5);
-        box-shadow: inset 3px 0 0 var(--accent2);
-      }
-      #tutorial-role-title {
-        display: block;
-        color: var(--text);
-        font-size: 14px;
-        letter-spacing: 0.8px;
-        text-transform: uppercase;
-      }
-      #tutorial-role-text {
-        margin-top: 6px;
-        color: var(--dim);
-        font-size: 12.5px;
-        line-height: 1.55;
-      }
-      .tutorial-grid {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 10px;
-        margin: 22px 0;
-        text-align: left;
-      }
-      .tutorial-step {
-        min-height: 126px;
-        padding: 15px;
-        border: 1px solid var(--line);
-        border-radius: 13px;
-        background: var(--card);
-      }
-      .tutorial-step span {
-        display: block;
-        color: var(--gold);
-        font-size: 12px;
-        font-weight: 800;
-        letter-spacing: 1px;
-        text-transform: uppercase;
-      }
-      .tutorial-step p {
-        margin-top: 8px;
-        color: var(--dim);
-        font-size: 12px;
-        line-height: 1.55;
-      }
-      .tutorial-step kbd {
-        display: inline-block;
-        padding: 1px 5px;
-        border: 1px solid var(--line-lit);
-        border-radius: 4px;
-        background: #0b0f18;
-        color: var(--text);
-        font-family: inherit;
-      }
-      .welcome-action {
-        min-width: 220px;
-        padding: 13px 24px;
+      #name {
+        width: 100%;
+        padding: 13px 18px;
         border-radius: 12px;
-        background: linear-gradient(135deg, var(--gold), var(--gold-deep));
-        color: #241a05;
+        border: 1px solid var(--card-border);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        font-family: var(--font);
+        font-size: 16px;
+        font-weight: 700;
+        text-align: center;
+        outline: none;
+        transition: border-color 0.2s;
+      }
+      #name:focus {
+        border-color: var(--accent);
+      }
+      #swatches {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 9px;
+        margin: 18px 0 22px;
+      }
+      .sw {
+        aspect-ratio: 1;
+        border-radius: 50%;
+        border: 2.5px solid transparent;
+        cursor: pointer;
+        transition:
+          transform 0.15s,
+          border-color 0.15s;
+      }
+      .sw:hover {
+        transform: scale(1.14);
+      }
+      .sw.sel {
+        border-color: #fff;
+        transform: scale(1.14);
+        box-shadow: 0 0 14px rgba(255, 255, 255, 0.35);
+      }
+      #play {
+        width: 100%;
+        padding: 15px;
+        border: none;
+        border-radius: 14px;
+        font-family: var(--font);
+        font-size: 19px;
+        font-weight: 900;
+        letter-spacing: 2px;
+        color: #08131c;
+        background: linear-gradient(135deg, var(--accent), #7bed9f);
+        cursor: pointer;
+        transition:
+          transform 0.15s,
+          box-shadow 0.15s,
+          filter 0.15s;
+        box-shadow: 0 8px 30px rgba(72, 219, 251, 0.35);
+      }
+      #play:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 36px rgba(72, 219, 251, 0.5);
+      }
+      #play:active {
+        transform: translateY(0);
+      }
+      #play:disabled {
+        filter: saturate(0.2) brightness(0.7);
+        cursor: wait;
+      }
+      #joinhint {
+        margin-top: 16px;
+        font-size: 12px;
+        color: var(--dim);
+        line-height: 1.7;
+      }
+      #joinhint b {
+        color: var(--text);
+      }
+      #joinbest {
+        margin-top: 10px;
+        font-size: 12px;
+        color: var(--gold);
+        font-weight: 700;
+        letter-spacing: 1px;
+        min-height: 15px;
+      }
+
+      /* ── Pause overlay ──────────────────────────────────────────── */
+      #pause {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(6, 9, 18, 0.55);
+        backdrop-filter: blur(4px);
+        z-index: 9;
+      }
+      #pause.on {
+        display: flex;
+      }
+      #pause .panel {
+        padding: 28px 36px;
+        text-align: center;
+      }
+      #pause h2 {
+        font-size: 24px;
+        font-weight: 900;
+        letter-spacing: 2px;
+        margin-bottom: 14px;
+      }
+      #pause .keys {
+        font-size: 13px;
+        color: var(--dim);
+        line-height: 2;
+        margin-bottom: 18px;
+      }
+      #pause .keys b {
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        padding: 1px 7px;
+        margin-right: 4px;
+      }
+      #resume {
+        padding: 11px 34px;
+        border: none;
+        border-radius: 12px;
+        font-family: var(--font);
+        font-size: 15px;
         font-weight: 800;
         letter-spacing: 1px;
-        box-shadow: 0 8px 28px var(--gold-glow);
-      }
-      .welcome-action:hover {
-        filter: brightness(1.08);
-        transform: translateY(-1px);
-      }
-      #desktop-notice {
-        display: none;
-        z-index: 100;
-      }
-      #desktop-notice .welcome-card {
-        max-width: 430px;
-      }
-      .desktop-tip {
-        margin-top: 18px;
-        color: var(--faint);
-        font-size: 12px;
-      }
-      @media (max-width: 1250px) {
-        #action-wrap {
-          left: 16px;
-          transform: none;
-        }
-      }
-      @media (max-width: 900px), (hover: none) and (pointer: coarse) {
-        #desktop-notice {
-          display: flex;
-        }
-      }
-      @media (max-width: 720px) {
-        .tutorial-grid {
-          grid-template-columns: 1fr;
-        }
+        color: #08131c;
+        background: linear-gradient(135deg, var(--accent), #7bed9f);
+        cursor: pointer;
       }
     </style>
   </head>
   <body>
-    <!-- ═══ Full-screen character creator ═══ -->
-    <div id="lobby">
-      <canvas id="preview"></canvas>
-      <div class="vignette"></div>
-      <div class="motes"></div>
+    <canvas id="game"></canvas>
 
-      <header id="lobby-top">
-        <div class="logo">
-          <img class="brand-mark" src="/pawlogo.jpeg" alt="" />
-          <span class="logo-copy">
-            <strong>PAWVERSE</strong>
-            <em>OPEN PARK · SOLANA</em>
-          </span>
-        </div>
-        <div class="lobby-actions">
-          <span class="top-badge">$PAW</span>
-          <a
-            class="social-link"
-            href="https://x.com/pawversePF"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="Follow Pawverse on X"
-            title="Follow Pawverse on X"
-            >X</a
-          >
-          <button id="wallet-btn">◎ Connect Wallet</button>
-        </div>
-      </header>
-
-      <aside id="rail-left" class="rail panel ornate">
-        <h3 class="sec">Choose character</h3>
-        <div class="species-tabs" id="species-row"></div>
-        <div class="breeds" id="breed-grid"></div>
-      </aside>
-
-      <aside id="rail-right" class="rail panel ornate">
-        <section>
-          <h3 class="sec">🎨 Coat &amp; style</h3>
-          <div class="opt-label">Primary coat</div>
-          <div class="swatches" id="pal-primary"></div>
-          <div class="opt-label">Secondary / markings</div>
-          <div class="swatches" id="pal-secondary"></div>
-          <div class="opt-label">Pattern</div>
-          <div class="row" id="pattern-row"></div>
-          <div class="opt-label">
-            Size <span id="size-val" style="color: var(--gold)">1.00×</span>
-          </div>
-          <input
-            type="range"
-            id="size"
-            min="0.7"
-            max="1.4"
-            step="0.05"
-            value="1"
-          />
-        </section>
-        <section>
-          <h3 class="sec">🧣 Extras</h3>
-          <div class="opt-label">Collar</div>
-          <div class="swatches" id="collar-row"></div>
-          <div class="opt-label">Accessory</div>
-          <div class="row" id="acc-row"></div>
-        </section>
-        <section>
-          <h3 class="sec">◎ Wallet</h3>
-          <div id="wallet-status">
-            no wallet — playing as guest (loadout saved locally)
-          </div>
-          <div class="opt-label">Wallet character skins</div>
-          <div class="row" id="nft-skins">
-            <span style="font-size: 11.5px; color: var(--dim)"
-              >connect a wallet to see your character NFTs</span
-            >
-          </div>
-          <button id="mint-btn" style="display: none">
-            ⛏ mint this character (devnet stub)
-          </button>
-          <p class="wallet-note">
-            Your wallet address is your character's persistent identity —
-            loadouts save per-address, and holding the configured token unlocks
-            💎 premium characters. Every transaction requires explicit wallet
-            confirmation.
-          </p>
-        </section>
-      </aside>
-
-      <div id="pose-row">
-        <button class="pose-btn sel" data-pose="idle" title="Stand">🧍</button>
-        <button class="pose-btn" data-pose="wag" title="Wag">🐕</button>
-        <button class="pose-btn" data-pose="sit" title="Sit">🪑</button>
-        <button class="pose-btn" data-pose="run" title="Run">🏃</button>
-        <button class="pose-btn" data-pose="howl" title="Howl">🌕</button>
+    <div id="hud">
+      <div id="feed"></div>
+      <div id="altwrap" class="card">
+        <div id="alt">0<small>m</small></div>
+        <div id="bestbar"><div id="bestfill"></div></div>
+        <div id="best">BEST <b>0m</b></div>
       </div>
-
-      <footer id="lobby-bottom">
+      <div id="board" class="card">
+        <h3>LIVE — HIGHEST NOW</h3>
+        <div id="live"></div>
+        <h3 style="margin-top: 10px">ALL-TIME</h3>
+        <div id="all" class="all"></div>
+        <div id="rank"></div>
+      </div>
+      <div id="labels"></div>
+      <div id="toasts"></div>
+      <div id="milestone"></div>
+      <div id="hint" class="card">
+        <b>WASD</b> move · <b>Shift</b> sprint · <b>Space</b> jump ·
+        <b>F</b> shove · <b>Enter</b> chat · <b>M</b> mute
+      </div>
+      <div id="chatbar">
         <input
-          id="dogname"
-          maxlength="16"
-          placeholder="Name your character…"
+          id="chatinput"
+          maxlength="120"
+          placeholder="say something…"
           autocomplete="off"
         />
-        <button id="randomize" title="Create a random character">🎲</button>
-        <button id="play">ENTER THE PARK 🐾</button>
-      </footer>
+      </div>
+      <div id="conn">RECONNECTING…</div>
     </div>
 
-    <!-- ═══ In-game HUD ═══ -->
-    <div id="hud">
-      <div id="hud-brand" class="hud-card">
-        <img src="/pawlogo.jpeg" alt="" />
-        <span><strong>PAWVERSE</strong><small>OPEN PARK</small></span>
-      </div>
-
-      <!-- unit frame -->
-      <div id="unit-frame" class="hud-card ornate">
-        <div id="uf-portrait"><span id="uf-emoji">🐕</span></div>
-        <div class="uf-body">
-          <div class="uf-top">
-            <span id="uf-name">Paw</span><span id="rep-label">Neutral</span>
-          </div>
-          <div class="bar hp"><div id="happy-fill"></div></div>
-          <div id="life-wrap" hidden>
-            <span>Life</span><span id="life-pips"></span>
-          </div>
-          <div class="bar rep" id="rep-wrap">
-            <div id="rep-fill"></div>
-            <div id="rep-dot"></div>
-          </div>
-          <div class="uf-chips">
-            <span class="chip-stat">⚡ <b id="s-zoomies">0</b></span>
-            <span class="chip-stat">🦴 <b id="s-treats">0</b></span>
-            <span class="chip-stat" id="role-label">Hunter</span>
-          </div>
-          <div id="needs">
-            <label>Play</label>
-            <div class="need"><i id="need-play"></i></div>
-            <label>Social</label>
-            <div class="need"><i id="need-social"></i></div>
-            <label>Explore</label>
-            <div class="need"><i id="need-explore"></i></div>
-            <span id="mood-label">Content</span>
-          </div>
+    <div id="join">
+      <div class="panel card">
+        <div id="logo">TOPPLE</div>
+        <div id="tag">
+          One endless tower. Highest blob wins. How high before you fall?
         </div>
-      </div>
-
-      <div id="park-event" class="hud-card ornate">
-        <div id="park-name">Park event</div>
-        <div id="park-meter"><div id="park-progress"></div></div>
-        <div id="park-time"></div>
-      </div>
-
-      <div id="journal" class="hud-card ornate">
-        <h4>Trail Journal · J</h4>
-        <div id="journal-level">Trailblazer 1</div>
-        <div id="journal-xp">0/100 XP</div>
-        <div id="journal-discoveries">0 scents found</div>
-        <div id="journal-events">0 park events completed</div>
-      </div>
-
-      <div id="conn-status">connecting…</div>
-      <div id="map-wrap">
-        <canvas id="minimap" width="184" height="184"></canvas>
-        <div id="map-ring"></div>
-        <div id="map-n">N</div>
-      </div>
-
-      <div id="tracker" class="hud-card ornate">
-        <h4>🏆 Top Paws</h4>
-        <div id="lb-rows">
-          <div class="lb-row"><span class="n">waiting…</span></div>
-        </div>
-        <div id="lb-rank"></div>
-        <div id="obj-head">
-          <h4 style="margin: 0">📋 Pup Goals</h4>
-          <span id="obj-count">0/10</span>
-        </div>
-        <div id="obj-list"></div>
-      </div>
-
-      <div id="chat-wrap">
         <input
-          id="chat-input"
-          maxlength="120"
-          placeholder="Say something… (Esc to cancel)"
+          id="name"
+          maxlength="14"
+          placeholder="name your blob"
+          autocomplete="off"
         />
-      </div>
-      <div id="chat-log"></div>
-
-      <div id="power-wrap">
-        <div class="pmeter"><div id="power-fill"></div></div>
-        <p>release to throw</p>
-      </div>
-
-      <div id="action-wrap">
-        <div id="emote-bar">
-          <button
-            class="emote-btn"
-            data-emote="sit"
-            data-label="Sit — humans pet sitting animals"
-          >
-            <span class="ico">🪑</span><span class="key">C</span>
-          </button>
-          <button class="emote-btn" data-emote="lay" data-label="Lay down">
-            <span class="ico">😴</span><span class="key">X</span>
-          </button>
-          <button class="emote-btn" data-emote="wag" data-label="Wag tail">
-            <span class="ico">🐕</span><span class="key">V</span>
-          </button>
-          <button class="emote-btn" data-emote="roll" data-label="Roll over">
-            <span class="ico">🔄</span><span class="key">R</span>
-          </button>
-          <button
-            class="emote-btn"
-            data-emote="dig"
-            data-label="Dig — try the sparkling mounds"
-          >
-            <span class="ico">⛏️</span><span class="key">G</span>
-          </button>
-          <button
-            class="emote-btn"
-            data-emote="howl"
-            data-label="Howl — group up, or use Howl Rock"
-          >
-            <span class="ico">🌕</span><span class="key">H</span>
-          </button>
-          <button
-            class="emote-btn"
-            data-action="bark"
-            data-label="Call — gets everyone’s attention"
-          >
-            <span class="ico">💥</span><span class="key">B</span>
-          </button>
-          <button
-            class="emote-btn"
-            data-action="sniff"
-            data-label="Sniff — reveal nearby scents"
-          >
-            <span class="ico">◌</span><span class="key">N</span>
-          </button>
-          <button
-            class="emote-btn"
-            data-action="bite"
-            data-label="Bite — dogs catch player cats and raccoons"
-          >
-            <span class="ico word">BITE</span><span class="key">F</span>
-          </button>
-          <button
-            class="emote-btn"
-            data-action="grab"
-            data-label="Grab or drop the nearest ball"
-          >
-            <span class="ico word">GRAB</span><span class="key">E</span>
-          </button>
-          <button
-            class="emote-btn"
-            data-action="throw"
-            data-label="Quick throw — keyboard Q supports charged throws"
-          >
-            <span class="ico word">THROW</span><span class="key">Q</span>
-          </button>
-          <button
-            class="emote-btn"
-            data-action="mute"
-            data-label="Mute or restore game sound"
-          >
-            <span class="ico word">SOUND</span><span class="key">M</span>
-          </button>
-          <button
-            class="emote-btn"
-            data-action="journal"
-            data-label="Open the Trail Journal"
-          >
-            <span class="ico word">LOG</span><span class="key">J</span>
-          </button>
-          <button
-            class="emote-btn"
-            data-action="chat"
-            data-label="Open park chat"
-          >
-            <span class="ico word">CHAT</span><span class="key">ENTER</span>
-          </button>
+        <div id="swatches"></div>
+        <button id="play">CLIMB</button>
+        <div id="joinhint">
+          Drop straight into the live tower — no lobby, no rounds.<br />
+          <b>WASD</b> + <b>Space</b> to climb · <b>F</b> to shove ·
+          <b>Shift</b> to sprint
         </div>
-        <button id="help-btn" aria-label="Show controls">?</button>
-        <div id="hint-panel" class="hud-card">
-          <kbd>WASD</kbd> move · <kbd>Shift</kbd> sprint ·
-          <kbd>Space</kbd> jump<br />
-          <kbd>E</kbd> grab/drop ball · hold <kbd>Q</kbd>/<kbd>LMB</kbd> to
-          charge a throw<br />
-          <kbd>F</kbd> dog bite · <kbd>B</kbd> call · <kbd>Enter</kbd> chat ·
-          <kbd>M</kbd> mute<br />
-          <kbd>N</kbd> sniff for discoveries · <kbd>J</kbd> trail journal<br />
-          emotes: <kbd>C</kbd> sit <kbd>X</kbd> lay <kbd>V</kbd> wag
-          <kbd>R</kbd> roll <kbd>G</kbd> dig <kbd>H</kbd> howl<br />
-          3 different emotes near a human = 🎪 trick show!
-        </div>
-      </div>
-
-      <div id="toasts"></div>
-      <div id="click-to-play" style="display: none">
-        <div>🐾 click to grab the mouse and play</div>
+        <div id="joinbest"></div>
       </div>
     </div>
 
-    <div
-      id="tutorial"
-      class="welcome-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="tutorial-title"
-      hidden
-    >
-      <div class="welcome-card panel ornate">
-        <img class="brand-mark" src="/pawlogo.jpeg" alt="Pawverse" />
-        <h2 id="tutorial-title">Welcome to the park</h2>
-        <p class="welcome-lead">
-          Meet other animals, explore the island, and make your own stories.
-          Here are the essentials before your paws hit the ground.
-        </p>
-        <div id="tutorial-role" data-role="runner">
-          <strong id="tutorial-role-title">Your objective</strong>
-          <p id="tutorial-role-text"></p>
+    <div id="pause">
+      <div class="panel card">
+        <h2>PAUSED</h2>
+        <div class="keys">
+          <b>WASD</b> move &nbsp; <b>Shift</b> sprint &nbsp;
+          <b>Space</b> jump<br />
+          <b>F</b> shove &nbsp; <b>Enter</b> chat &nbsp; <b>M</b> mute
         </div>
-        <div class="tutorial-grid">
-          <div class="tutorial-step">
-            <span>1 · Run free</span>
-            <p>
-              Use <kbd>WASD</kbd> to move, <kbd>Shift</kbd> to sprint, and
-              <kbd>Space</kbd> to jump. Move the mouse to look around.
-            </p>
-          </div>
-          <div class="tutorial-step">
-            <span>2 · Know your role</span>
-            <p>
-              Dogs press <kbd>F</kbd> to catch player cats and raccoons in three
-              bites. Cats and raccoons should sprint, dodge, and escape.
-            </p>
-          </div>
-          <div class="tutorial-step">
-            <span>3 · Explore together</span>
-            <p>
-              Follow Pup Goals, sniff out discoveries with <kbd>N</kbd>, chat
-              with <kbd>Enter</kbd>, and open the <kbd>?</kbd> panel anytime for
-              help.
-            </p>
-          </div>
-        </div>
-        <button id="tutorial-start" class="welcome-action">
-          Start exploring
-        </button>
-      </div>
-    </div>
-
-    <div
-      id="desktop-notice"
-      class="welcome-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="desktop-title"
-    >
-      <div class="welcome-card panel ornate">
-        <img class="brand-mark" src="/pawlogo.jpeg" alt="Pawverse" />
-        <h2 id="desktop-title">Your park is waiting</h2>
-        <p class="welcome-lead">
-          Pawverse is built for keyboard and mouse controls. Please visit us on
-          a desktop or laptop for the full experience.
-        </p>
-        <p class="desktop-tip">We look forward to seeing you in the park.</p>
+        <button id="resume">KEEP CLIMBING</button>
       </div>
     </div>
 

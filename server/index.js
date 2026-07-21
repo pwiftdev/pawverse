@@ -1,4 +1,4 @@
-// ─── PAWVERSE authoritative server ───────────────────────────────────────────
+// ─── TOPPLE authoritative server ───────────────────────────────────────────
 // Express (HTTP API + optional static client) + WebSocket (/ws) on one HTTP
 // server, driving the authoritative game loop at TICK_RATE.
 //
@@ -85,14 +85,14 @@ export function createServer({
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const instance = createServer();
   instance.listen().then((port) => {
-    console.log(`[pawverse] server listening on :${port} (ws: /ws)`);
+    console.log(`[topple] server listening on :${port} (ws: /ws)`);
   });
 
   let shuttingDown = false;
   const shutdown = (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`[pawverse] ${signal} received, closing connections`);
+    console.log(`[topple] ${signal} received, closing connections`);
     instance.close().finally(() => process.exit(0));
   };
   process.once("SIGTERM", () => shutdown("SIGTERM"));

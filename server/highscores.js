@@ -24,7 +24,12 @@ export class Highscores {
       if (Array.isArray(raw)) {
         this.entries = raw
           .filter((e) => e && typeof e.n === "string" && Number.isFinite(e.alt))
-          .map((e) => ({ n: e.n, alt: e.alt, ts: e.ts || 0 }))
+          .map((e) => ({
+            n: e.n,
+            alt: e.alt,
+            w: typeof e.w === "string" ? e.w : "",
+            ts: e.ts || 0,
+          }))
           .sort((a, b) => b.alt - a.alt)
           .slice(0, HIGHSCORE_KEEP);
       }
@@ -44,15 +49,16 @@ export class Highscores {
    * Offer a run. One entry per name (keeps the board diverse); returns true
    * if the board changed (→ broadcast a RECORD event).
    */
-  submit(name, alt) {
+  submit(name, alt, wallet = "") {
     if (!Number.isFinite(alt) || alt <= this.floor()) return false;
     const existing = this.entries.find((e) => e.n === name);
     if (existing) {
       if (alt <= existing.alt) return false;
       existing.alt = alt;
+      if (wallet) existing.w = wallet;
       existing.ts = Date.now();
     } else {
-      this.entries.push({ n: name, alt, ts: Date.now() });
+      this.entries.push({ n: name, alt, w: wallet || "", ts: Date.now() });
     }
     this.entries.sort((a, b) => b.alt - a.alt);
     this.entries.length = Math.min(this.entries.length, HIGHSCORE_KEEP);
@@ -61,7 +67,9 @@ export class Highscores {
   }
 
   top(n = 5) {
-    return this.entries.slice(0, n).map((e) => ({ n: e.n, alt: e.alt }));
+    return this.entries
+      .slice(0, n)
+      .map((e) => ({ n: e.n, alt: e.alt, w: e.w || "" }));
   }
 
   scheduleSave() {

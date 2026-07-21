@@ -1,5 +1,5 @@
 // ─── TOPPLE shared tower geometry ────────────────────────────────────────────
-// Single source of truth for the endless climb: the floating base island and
+// Single source of truth for the summit race: the floating base island and
 // the deterministic platform helix above it. Client renders FROM this data;
 // the server simulates WITH it — so prediction and authority agree exactly.
 //
@@ -45,7 +45,42 @@ export const SPAWN = { x: 0, z: 10 };
 export const P_NORMAL = 0;
 export const P_BOUNCY = 1; // launches you upward on landing
 export const P_ICE = 2; // low friction
-export const P_REST = 3; // big social ring every ~60 m
+export const P_REST = 3; // big social ring every ~60 m — also your checkpoint
+export const P_BOOST = 4; // $BOOSTER pad — a rocket launch worth ~5 platforms
+export const P_STICKY = 5; // honey — slow, grippy, appears in the sunset band
+
+// ── Platform shapes ──────────────────────────────────────────────────────────
+// Every shape has REAL collision on both sides of the wire, not just a skin:
+//   DISC — round top, radius r (the classic)
+//   HEX  — hexagonal slab; collision uses the inscribed circle r so no edge
+//          of the visual is ever outside the walkable area
+//   BAR  — a long rotated plank { hx: half-length, hz: half-width, rot };
+//          r stores the inscribed half-width so gap math stays conservative
+
+export const SH_DISC = 0;
+export const SH_HEX = 1;
+export const SH_BAR = 2;
+
+/** True if (x,z) is on top of platform p within `grace` metres of its edge. */
+export function onPlatformTop(p, x, z, grace) {
+  if (p.shape === SH_BAR) {
+    const c = Math.cos(p.rot),
+      s = Math.sin(p.rot);
+    const dx = x - p.x,
+      dz = z - p.z;
+    const lx = dx * c + dz * s;
+    const lz = -dx * s + dz * c;
+    return Math.abs(lx) <= p.hx + grace && Math.abs(lz) <= p.hz + grace;
+  }
+  const dx = x - p.x,
+    dz = z - p.z;
+  return dx * dx + dz * dz <= (p.r + grace) ** 2;
+}
+
+/** Widest horizontal extent — used for overhead-shadow checks. */
+function maxExtent(p) {
+  return p.shape === SH_BAR ? Math.max(p.hx, p.hz) : p.r;
+}
 
 // ── The helix ────────────────────────────────────────────────────────────────
 // Iterative construction: each platform is placed a reachable hop from the
@@ -68,6 +103,7 @@ export const PLATFORMS = (() => {
   let y = 2.6; // first hop from the island dome
   let i = 0;
   let sinceBouncy = 99;
+  let sinceBoost = 99;
   let nextRest = 55 + rng() * 20;
   let prev = null; // last main-path platform (rest rings count)
 
@@ -85,9 +121,35 @@ export const PLATFORMS = (() => {
     return next;
   }
 
+  /**
+   * Push `next` AWAY from `prev` until the edge gap is at least `minEdge` —
+   * the difficulty knob. Without it consecutive platforms mostly overlap and
+   * the climb is a mindless staircase; with it every hop is a real jump.
+   * clampGap runs after, so the gap always stays inside the jump envelope.
+   */
+  function stretchGap(next, minEdge) {
+    if (!prev || minEdge <= 0) return next;
+    let dx = next.x - prev.x,
+      dz = next.z - prev.z;
+    let d = Math.hypot(dx, dz);
+    if (d < 1e-4) {
+      dx = Math.cos(angle);
+      dz = Math.sin(angle);
+      d = 1;
+    }
+    const want = prev.r + next.r + minEdge;
+    if (d < want) {
+      next.x = prev.x + (dx / d) * want;
+      next.z = prev.z + (dz / d) * want;
+    }
+    return next;
+  }
+
   while (y < MAX_ALTITUDE) {
-    // Difficulty eases upward: platforms shrink, gaps stretch a little.
+    // Difficulty ramps upward: platforms shrink, gaps widen toward the edge
+    // of the jump envelope, side routes thin out, rest rings spread apart.
     const hard = Math.min(1, y / 900);
+    const cozy = Math.max(0, 1 - y / 55); // the first hops stay friendly
 
     if (y >= nextRest) {
       // Rest ring: a big safe disc pulled in toward the axis.
@@ -98,42 +160,93 @@ export const PLATFORMS = (() => {
         z: Math.sin(angle) * (radius * 0.55),
         r: 5.4,
         type: P_REST,
+        shape: SH_DISC,
       });
       out.push(rest);
       prev = rest;
-      nextRest = y + 52 + rng() * 26;
+      // Rings spread out as you climb — more altitude at risk between saves.
+      nextRest = y + 52 + hard * 34 + rng() * 26;
       y += 1.25 + rng() * 0.3;
       angle += 0.8 + rng() * 0.6;
       continue;
     }
 
-    const r = Math.max(1.05, 2.5 - hard * 1.1 - rng() * 0.35);
+    const r = Math.max(0.95, 2.5 - hard * 1.3 - rng() * 0.4);
 
-    // Choose the type
+    // Choose the type — each altitude band has its own mix, so the climb
+    // keeps changing: meadow hops → cloud boosters → honey sunset → ice.
     let type = P_NORMAL;
     sinceBouncy++;
-    if (sinceBouncy > 4 && rng() < 0.055) {
+    sinceBoost++;
+    if (y > 140 && sinceBoost > 9 && rng() < 0.05 + hard * 0.02) {
+      type = P_BOOST;
+      sinceBoost = 0;
+    } else if (sinceBouncy > 4 && rng() < 0.055) {
       type = P_BOUNCY;
       sinceBouncy = 0;
-    } else if (y > 250 && rng() < 0.13 + hard * 0.08) {
+    } else if (y > 260 && y < 520 && rng() < 0.18) {
+      type = P_STICKY;
+    } else if (y > 480 && rng() < 0.13 + hard * 0.08) {
       type = P_ICE;
     }
 
-    const main = clampGap({
-      i: i++,
-      x: Math.cos(angle) * radius,
-      y,
-      z: Math.sin(angle) * radius,
-      r,
-      type,
-    });
+    // Shape: honey is honeycomb hex; planks bridge the path above the meadow;
+    // hex stones mix in everywhere for variety. Launch pads stay round.
+    let shape = SH_DISC;
+    let hx = 0,
+      hz = 0,
+      rot = 0;
+    if (type === P_STICKY) {
+      shape = SH_HEX;
+      rot = rng() * Math.PI;
+    } else if (
+      y > 60 &&
+      (type === P_NORMAL || type === P_ICE) &&
+      rng() < 0.18
+    ) {
+      shape = SH_BAR;
+      hx = 1.7 + rng() * 1.4; // half-length — a proper plank
+      hz = 0.68 + rng() * 0.14; // half-width
+      rot = angle + Math.PI / 2 + (rng() - 0.5) * 0.7; // roughly along the path
+    } else if (type === P_NORMAL && rng() < 0.16) {
+      shape = SH_HEX;
+      rot = rng() * Math.PI;
+    }
+
+    // The difficulty curve: a REQUIRED edge gap per hop. ~0 on the island,
+    // ~1.3 m mid-tower, up to ~2.85 m (near the sprint-jump limit) high up —
+    // reading the gap and deciding walk vs sprint becomes the game.
+    const minGap = Math.min(
+      2.85,
+      (0.7 + hard * 1.8 + rng() * 0.45) * (1 - cozy),
+    );
+
+    const main = clampGap(
+      stretchGap(
+        {
+          i: i++,
+          x: Math.cos(angle) * radius,
+          y,
+          z: Math.sin(angle) * radius,
+          r: shape === SH_BAR ? hz : r, // inscribed radius keeps gap math honest
+          type,
+          shape,
+          hx,
+          hz,
+          rot,
+        },
+        minGap,
+      ),
+    );
     out.push(main);
     prev = main;
 
-    // Occasional side platform — an alternate route, always within a hop.
-    if (rng() < 0.3) {
+    // Occasional side platform — an alternate route that thins out with
+    // altitude (fewer escape hatches up high).
+    if (rng() < 0.3 - hard * 0.18) {
       const a2 = rng() * Math.PI * 2;
       const off = main.r + 1.6 + rng() * 1.6;
+      const sideHex = rng() < 0.3;
       out.push({
         i: i++,
         x: main.x + Math.cos(a2) * off,
@@ -141,6 +254,10 @@ export const PLATFORMS = (() => {
         z: main.z + Math.sin(a2) * off,
         r: Math.max(0.95, r - 0.35),
         type: rng() < 0.08 ? P_BOUNCY : P_NORMAL,
+        shape: sideHex ? SH_HEX : SH_DISC,
+        hx: 0,
+        hz: 0,
+        rot: sideHex ? rng() * Math.PI : 0,
       });
     }
 
@@ -162,11 +279,13 @@ export const PLATFORMS = (() => {
     z: 0,
     r: 6.5,
     type: P_REST,
+    shape: SH_DISC,
   });
   out.push(summit);
 
-  // Demote bouncy pads shadowed from directly above — a pad you can't drop
-  // onto is a lie. (Overlapping "stair step" platforms are otherwise fine.)
+  // Demote launch pads shadowed from directly above — a pad you can't drop
+  // onto (or that fires you into a ceiling) is a lie. Boost pads launch much
+  // higher than bouncy ones, so they need a taller clear column.
   const byBand = new Map();
   const BAND = 5;
   for (const p of out) {
@@ -175,12 +294,13 @@ export const PLATFORMS = (() => {
     byBand.get(k).push(p);
   }
   for (const p of out) {
-    if (p.type !== P_BOUNCY) continue;
+    if (p.type !== P_BOUNCY && p.type !== P_BOOST) continue;
+    const clear = p.type === P_BOOST ? 8.2 : BAND; // ≥ launch apex + headroom
     const k = Math.floor(p.y / BAND);
-    outer: for (let b = k; b <= k + 1; b++) {
+    outer: for (let b = k; b <= k + Math.ceil(clear / BAND); b++) {
       for (const q of byBand.get(b) || []) {
-        if (q === p || q.y <= p.y || q.y - p.y > BAND) continue;
-        if (Math.hypot(q.x - p.x, q.z - p.z) < q.r + 0.3) {
+        if (q === p || q.y <= p.y || q.y - p.y > clear) continue;
+        if (Math.hypot(q.x - p.x, q.z - p.z) < maxExtent(q) + 0.3) {
           p.type = P_NORMAL;
           break outer;
         }
@@ -225,9 +345,7 @@ export function supportAt(x, y, z, snap = 0.3) {
   }
   // Platform tops
   for (const p of platformsInBand(y - snap - 0.01, y + snap + 0.01)) {
-    const dx = x - p.x,
-      dz = z - p.z;
-    if (dx * dx + dz * dz <= (p.r + LAND_GRACE) ** 2) {
+    if (onPlatformTop(p, x, z, LAND_GRACE)) {
       if (y >= p.y - snap && y <= p.y + snap) return { top: p.y, type: p.type };
     }
   }
@@ -247,9 +365,7 @@ export function landingAt(x, prevY, newY, z) {
   }
   for (const p of platformsInBand(newY, prevY + 0.01)) {
     if (p.y > prevY + 1e-6 || p.y < newY) continue;
-    const dx = x - p.x,
-      dz = z - p.z;
-    if (dx * dx + dz * dz > (p.r + LAND_GRACE) ** 2) continue;
+    if (!onPlatformTop(p, x, z, LAND_GRACE)) continue;
     if (!best || p.y > best.top) best = { top: p.y, type: p.type };
   }
   return best;

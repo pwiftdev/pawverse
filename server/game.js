@@ -33,7 +33,12 @@ import {
   deriveAnim,
 } from "../shared/movement.js";
 import { islandHeightAt } from "../shared/tower.js";
-import { sanitizeName, sanitizeColor, sanitizeChat } from "./sanitize.js";
+import {
+  sanitizeName,
+  sanitizeColor,
+  sanitizeChat,
+  sanitizeWallet,
+} from "./sanitize.js";
 import { filterVisible, withinInterest } from "./interest.js";
 import { Highscores } from "./highscores.js";
 
@@ -106,6 +111,7 @@ export class Game {
       ws: s.ws,
       name: sanitizeName(msg.name),
       col: sanitizeColor(msg.color),
+      wallet: sanitizeWallet(msg.wallet), // '' = free play, not reward-eligible
       move,
       inputQueue: [],
       lastSeq: 0,
@@ -339,7 +345,11 @@ export class Game {
   submitBest(p) {
     if (p.sessionBest < 8) return; // hopping around the island isn't a run
     const prevTop = this.highscores.entries[0];
-    const changed = this.highscores.submit(p.name, Math.round(p.sessionBest));
+    const changed = this.highscores.submit(
+      p.name,
+      Math.round(p.sessionBest),
+      p.wallet,
+    );
     if (!changed) return;
     const top = this.highscores.entries[0];
     // Only the tower record itself is an announcement.
@@ -358,10 +368,13 @@ export class Game {
     const ranked = [...this.players.values()].sort(
       (a, b) => b.move.y - a.move.y,
     );
-    const live = ranked
-      .slice(0, 5)
-      .map((p) => ({ id: p.id, n: p.name, alt: Math.round(p.move.y) }));
-    const all = this.highscores.top(5);
+    const live = ranked.slice(0, 10).map((p) => ({
+      id: p.id,
+      n: p.name,
+      alt: Math.round(p.move.y),
+      w: p.wallet,
+    }));
+    const all = this.highscores.top(10);
 
     const leader = ranked[0];
     const leaderId =
@@ -467,6 +480,7 @@ export class Game {
       v: [r3(m.vx), r3(m.vy), r3(m.vz)],
       g: m.grounded ? 1 : 0,
       gt: m.groundType,
+      cp: [r3(m.cx), r3(m.cy), r3(m.cz)],
       anim: deriveAnim(m),
       alt: Math.round(Math.max(0, m.y)),
       best: Math.round(p.sessionBest),

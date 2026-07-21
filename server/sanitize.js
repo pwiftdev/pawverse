@@ -23,3 +23,14 @@ export function sanitizeChat(text) {
   if (typeof text !== "string") return "";
   return text.trim().slice(0, CHAT_MAX_LEN);
 }
+
+/**
+ * Solana wallet address: base58, 32–44 chars, else '' (free play).
+ * Public keys only — this is display/reward-routing data, never a secret.
+ */
+const SOL_ADDR = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+export function sanitizeWallet(wallet) {
+  if (typeof wallet !== "string") return "";
+  const w = wallet.trim();
+  return SOL_ADDR.test(w) ? w : "";
+}

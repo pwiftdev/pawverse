@@ -1,17 +1,26 @@
-# 👑 TOPPLE
+# 🚀 BOOSTER — $BOOSTER
 
-**An endless multiplayer climb. One tower, no rounds, no lobbies — the highest
-blob wears the crown.**
+**One tower. One summit. The first blob to reach the 5,000 m top takes the
+entire $BOOSTER creator-reward pool for the cycle. Send it.**
 
 Drop into a live, persistent tower at any moment as a squishy googly-eyed blob.
 Your altitude is your score, ticking live above your head. Climb the platform
-helix from the meadow through the cloud layer, the sunset band, the dusk
-crystals, and into space. Bump and shove other blobs off ledges, ride bouncy
-pads, slide across ice — and when you fall (you will fall), everyone hears
-about it.
+helix from the meadow through the cloud layer, the honey sunset, the dusk
+crystals, deep space, the nebula, and the white-gold summit approach. Ride
+**booster pads** for rocket launches, bank **checkpoint rest rings**, bump and
+shove other blobs off ledges — and when you fall (you will fall), everyone
+hears about it.
 
+- **The prize** — reaching the Summit wins the cycle's creator rewards. Join
+  with a Solana wallet address to be reward-eligible; without one it's free
+  play — you can climb, but you can't win. Press **ESC** in game for the full
+  standings with every player's public wallet (one-click copy).
 - **No rounds, no lobbies** — the world never resets; you join mid-chaos and
   the screen explains itself: higher = winning.
+- **Booster pads** — the signature $BOOSTER mechanic: orange rocket pads that
+  launch you ~5 platforms of altitude in one screaming whoosh.
+- **Checkpoints** — every rest ring you land on is banked; falling into the
+  cloud sea rescues you to your last ring, not the bottom. Progress sticks.
 - **The crown** — the current highest blob wears a crown and casts a golden
   beacon visible across the whole tower. Go take it.
 - **Falls are content** — big falls are broadcast (`💀 Wobbles fell 214m`),
@@ -53,13 +62,27 @@ procedurally at runtime.
   module load, identical on server and client. Every consecutive hop is
   verified against the jump envelope (max rise 1.6 m vs. a 1.76 m apex, capped
   edge gaps), so nothing is ever unreachable — the test suite asserts this for
-  all ~4,900 platforms up to the 5,000 m Summit flag.
-- **Platform types** — normal, **bouncy pads** (launch you upward; pads that
-  would be shadowed by an overhang are demoted at generation), **ice** (barely
-  any grip, appears above 250 m), and big **rest rings** every ~60 m.
-- **Altitude zones** — sky, fog, lighting, platform palette, and the ambient
-  music chord all shift with height: meadow → cloud layer → sunset → dusk
-  crystals → space (stars fade in past ~450 m) → deep space gold.
+  all ~4,300 platforms up to the 5,000 m Summit flag.
+- **A real difficulty curve** — every hop has a REQUIRED edge gap that ramps
+  with altitude: ~0.6 m on the island, ~1.8 m mid-tower, ~2.7 m up high —
+  right against the 3.1 m sprint-jump limit. Platforms shrink, side routes
+  thin out, and rest rings spread apart the higher you climb; reading each
+  gap and choosing walk vs. sprint IS the game.
+- **Platform shapes with real collision** — round discs, hexagonal slabs
+  (honeycomb in the honey band), and long rotated plank bridges; the same
+  shape math runs in server physics and client prediction.
+- **Platform types** — normal, **bouncy pads** (small hop), **booster pads**
+  (🚀 rocket launch worth ~5 platforms, appear above 140 m; any pad shadowed
+  by an overhang is demoted at generation so a launch never hits a ceiling),
+  **honey** (sticky and slow, the sunset band's signature), **ice** (barely
+  any grip, above ~500 m), and big **rest rings** every ~60 m that double as
+  **checkpoints** — fall into the cloud sea and you're rescued to your last
+  ring.
+- **Altitude zones** — sky, fog, lighting, platform palette, decor, and the
+  ambient music chord all shift with height: meadow (flowers) → cloud layer →
+  honey sunset → dusk crystals → deep space neon → golden reach → nebula
+  (procedural two-tone dust in the sky shader) → white-gold summit approach.
+  Entering a new zone is announced on screen.
 - **Movement feel** — momentum on the ground, floatier air steering, coyote
   time off ledges, one-way platforms (jump up through, land on top),
   squash-and-stretch landings with dust, camera FOV kick and screen shake on

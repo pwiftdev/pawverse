@@ -2,7 +2,9 @@
 // JSON messages over a single WebSocket at path /ws.
 
 export const C2S = {
-  JOIN: "join", // { t, name, color }               color = BLOB_COLORS index
+  JOIN: "join", // { t, name, color, wallet }       color = BLOB_COLORS index;
+  //                                                wallet = Solana address or
+  //                                                '' (free play, no rewards)
   INPUT: "in", // { t, seq, f,b,l,r, sprint, jump, yaw, dt }
   SHOVE: "shove", // { t }                             shove nearest blob in front
   CHAT: "chat", // { t, text }
@@ -29,6 +31,7 @@ export const EVENTS = {
 
 // ─── Entity shapes (plain JSON) ──────────────────────────────────────────────
 // player: { id, n:name, col:colorIndex, p:[x,y,z], ry, v:[vx,vy,vz],
-//           g:grounded(0|1), gt:groundType, anim, alt:currentAltitude,
-//           best:sessionBest, chat:{text,until}|null }
-// leaderboard rows: live [{ id, n, alt }], all [{ n, alt }]
+//           g:grounded(0|1), gt:groundType, cp:[cx,cy,cz] checkpoint,
+//           anim, alt:currentAltitude, best:sessionBest,
+//           chat:{text,until}|null }
+// leaderboard rows: live [{ id, n, alt, w:wallet }], all [{ n, alt, w }]

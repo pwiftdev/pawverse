@@ -11,6 +11,7 @@ import {
   ACCEL,
   AIR_ACCEL,
   AIR_DECEL,
+  BOOST_VELOCITY,
   BOUNCE_VELOCITY,
   COYOTE_TIME,
   DECEL,
@@ -19,6 +20,9 @@ import {
   ICE_DECEL,
   JUMP_VELOCITY,
   SPRINT_SPEED,
+  STICKY_ACCEL,
+  STICKY_DECEL,
+  STICKY_SPEED_K,
   TERMINAL_VY,
   VOID_Y,
   WALK_SPEED,
@@ -27,17 +31,21 @@ import {
 import {
   islandHeightAt,
   landingAt,
+  P_BOOST,
   P_BOUNCY,
   P_ICE,
   P_NORMAL,
+  P_REST,
+  P_STICKY,
   SPAWN,
   supportAt,
 } from "./tower.js";
 
 export function createMoveState(x = SPAWN.x, z = SPAWN.z) {
+  const y = islandHeightAt(x, z) ?? 0;
   return {
     x,
-    y: islandHeightAt(x, z) ?? 0,
+    y,
     z,
     vx: 0,
     vy: 0,
@@ -48,6 +56,11 @@ export function createMoveState(x = SPAWN.x, z = SPAWN.z) {
     coyote: 0, // seconds since we last stood on something
     jumped: false, // true from takeoff until the next landing
     jumpLatch: false, // must release jump before jumping again
+    // Checkpoint — the last REST surface stood on. Falling into the cloud
+    // sea returns you here, so every rest ring is progress banked.
+    cx: x,
+    cy: y,
+    cz: z,
   };
 }
 
@@ -64,6 +77,7 @@ export function stepMovement(s, input, dt) {
     landed: false,
     impactVy: 0,
     bounced: false,
+    boosted: false,
     voided: false,
     jumped: false,
   };
@@ -84,11 +98,26 @@ export function stepMovement(s, input, dt) {
   }
 
   // Momentum: planar velocity chases the input direction. Rates depend on
-  // footing — ground is crisp, air keeps momentum, ice barely grips.
-  const speed = (input.sprint ? SPRINT_SPEED : WALK_SPEED) * 1;
+  // footing — ground is crisp, air keeps momentum, ice barely grips, honey
+  // grips completely but wades slowly.
   const onIce = s.grounded && s.groundType === P_ICE;
-  const accel = s.grounded ? (onIce ? ICE_ACCEL : ACCEL) : AIR_ACCEL;
-  const decel = s.grounded ? (onIce ? ICE_DECEL : DECEL) : AIR_DECEL;
+  const onHoney = s.grounded && s.groundType === P_STICKY;
+  const speed =
+    (input.sprint ? SPRINT_SPEED : WALK_SPEED) * (onHoney ? STICKY_SPEED_K : 1);
+  const accel = s.grounded
+    ? onIce
+      ? ICE_ACCEL
+      : onHoney
+        ? STICKY_ACCEL
+        : ACCEL
+    : AIR_ACCEL;
+  const decel = s.grounded
+    ? onIce
+      ? ICE_DECEL
+      : onHoney
+        ? STICKY_DECEL
+        : DECEL
+    : AIR_DECEL;
   const targetVx = dx * speed,
     targetVz = dz * speed;
   const rate = dx === 0 && dz === 0 ? decel : accel;
@@ -127,10 +156,11 @@ export function stepMovement(s, input, dt) {
       if (hit) {
         s.y = hit.top;
         ev.impactVy = s.vy;
-        if (hit.type === P_BOUNCY) {
-          s.vy = BOUNCE_VELOCITY;
+        if (hit.type === P_BOUNCY || hit.type === P_BOOST) {
+          s.vy = hit.type === P_BOOST ? BOOST_VELOCITY : BOUNCE_VELOCITY;
           s.jumped = true;
           ev.bounced = true;
+          ev.boosted = hit.type === P_BOOST;
         } else {
           s.vy = 0;
           s.grounded = true;
@@ -138,6 +168,11 @@ export function stepMovement(s, input, dt) {
           s.jumped = false;
           s.coyote = 0;
           ev.landed = true;
+          if (hit.type === P_REST) {
+            s.cx = s.x;
+            s.cy = hit.top;
+            s.cz = s.z;
+          }
         }
       }
     }
@@ -153,12 +188,13 @@ export function stepMovement(s, input, dt) {
     if (sup) {
       s.y = sup.top;
       s.groundType = sup.type;
-      if (sup.type === P_BOUNCY) {
+      if (sup.type === P_BOUNCY || sup.type === P_BOOST) {
         // standing on a pad you didn't fall onto (edge case) — pop anyway
-        s.vy = BOUNCE_VELOCITY;
+        s.vy = sup.type === P_BOOST ? BOOST_VELOCITY : BOUNCE_VELOCITY;
         s.grounded = false;
         s.jumped = true;
         ev.bounced = true;
+        ev.boosted = sup.type === P_BOOST;
       }
     } else {
       s.grounded = false;
@@ -175,18 +211,18 @@ export function stepMovement(s, input, dt) {
     s.z *= f;
   }
 
-  // Fell into the cloud sea → the wind lifts you back to the island.
-  // Deterministic: keep your heading angle, land on the spawn ring.
+  // Fell into the cloud sea → the wind lifts you back to your checkpoint:
+  // the last rest surface you stood on (the island until you bank a ring).
+  // Deterministic — checkpoint lives in the move state on both sides.
   if (s.y < VOID_Y) {
-    const a = Math.atan2(s.z, s.x) || 0;
-    s.x = Math.cos(a) * 9;
-    s.z = Math.sin(a) * 9;
-    s.y = islandHeightAt(s.x, s.z) ?? 0;
+    s.x = s.cx;
+    s.y = s.cy;
+    s.z = s.cz;
     s.vx = 0;
     s.vy = 0;
     s.vz = 0;
     s.grounded = true;
-    s.groundType = P_NORMAL;
+    s.groundType = P_REST;
     s.jumped = false;
     s.coyote = 0;
     ev.voided = true;

@@ -2,15 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TOPPLE — how high before you fall?</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>BOOSTER — $BOOSTER · first to the Summit takes the pool</title>
     <meta
       name="description"
-      content="An endless multiplayer climb. One tower, no rounds, no lobbies — the highest blob wears the crown. How high before you fall?"
+      content="$BOOSTER — one tower, one summit. The first blob to reach the top takes the entire creator-reward pool for the cycle. Ride the booster pads. Send it."
     />
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%91%91%3C/text%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9A%80%3C/text%3E%3C/svg%3E"
     />
     <style>
       :root {
@@ -44,6 +50,8 @@
         position: fixed;
         inset: 0;
         display: block;
+        touch-action: none;
+        -webkit-tap-highlight-color: transparent;
       }
 
       /* ── HUD chrome ─────────────────────────────────────────────── */
@@ -75,7 +83,7 @@
         padding: 8px 26px 12px;
       }
       #alt {
-        font-size: 44px;
+        font-size: 54px;
         font-weight: 800;
         line-height: 1;
         letter-spacing: -1px;
@@ -85,12 +93,12 @@
         -webkit-text-fill-color: transparent;
       }
       #alt small {
-        font-size: 20px;
+        font-size: 24px;
         font-weight: 700;
         -webkit-text-fill-color: #9fd8ff;
       }
       #bestbar {
-        width: 150px;
+        width: 180px;
         height: 4px;
         border-radius: 2px;
         background: rgba(255, 255, 255, 0.15);
@@ -119,12 +127,12 @@
         position: absolute;
         top: 16px;
         right: 16px;
-        width: 208px;
-        padding: 12px 14px;
-        font-size: 13px;
+        width: 244px;
+        padding: 14px 16px;
+        font-size: 13.5px;
       }
       #board h3 {
-        font-size: 10px;
+        font-size: 10.5px;
         letter-spacing: 2px;
         color: var(--dim);
         margin: 2px 0 6px;
@@ -346,6 +354,147 @@
         font-size: 14px;
         outline: none;
       }
+      /* ── Touch controls (body.touch only) ───────────────────────── */
+      #touchui {
+        position: fixed;
+        inset: 0;
+        display: none;
+        pointer-events: none;
+        z-index: 5;
+      }
+      body.touch #touchui.on {
+        display: block;
+      }
+      #joy {
+        position: fixed;
+        display: none;
+        width: 128px;
+        height: 128px;
+        border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.25);
+        background: rgba(12, 16, 30, 0.25);
+        transform: translate(-50%, -50%);
+      }
+      #joynub {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.35);
+        border: 2px solid rgba(255, 255, 255, 0.5);
+        transform: translate(-50%, -50%);
+      }
+      #tbtns {
+        position: fixed;
+        right: max(18px, env(safe-area-inset-right));
+        bottom: max(18px, env(safe-area-inset-bottom));
+        display: flex;
+        align-items: flex-end;
+        gap: 14px;
+        pointer-events: none;
+      }
+      .tbtn {
+        pointer-events: auto;
+        border: 2px solid rgba(255, 255, 255, 0.25);
+        background: rgba(12, 16, 30, 0.5);
+        color: var(--text);
+        font-family: var(--font);
+        font-weight: 900;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: none;
+      }
+      .tbtn:active {
+        background: rgba(255, 159, 67, 0.35);
+        border-color: rgba(255, 159, 67, 0.7);
+      }
+      #tjump {
+        width: 84px;
+        height: 84px;
+        font-size: 15px;
+        letter-spacing: 1px;
+        border-color: rgba(255, 159, 67, 0.55);
+        background: rgba(255, 159, 67, 0.16);
+        color: #ffd9a8;
+      }
+      #tshove {
+        width: 62px;
+        height: 62px;
+        font-size: 24px;
+      }
+      #tboard {
+        position: fixed;
+        left: max(18px, env(safe-area-inset-left));
+        bottom: max(64px, calc(env(safe-area-inset-bottom) + 64px));
+        width: 46px;
+        height: 46px;
+        font-size: 20px;
+        pointer-events: auto;
+      }
+      body.touch #hint {
+        display: none;
+      }
+
+      /* Portrait phones: the tower is a landscape game. */
+      #rotate {
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        text-align: center;
+        background: linear-gradient(180deg, #0a0e1c 0%, #131a33 100%);
+        font-size: 17px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        padding: 24px;
+      }
+      #rotate .r-emoji {
+        font-size: 56px;
+        animation: rspin 2.4s ease-in-out infinite;
+      }
+      @keyframes rspin {
+        0%,
+        55%,
+        100% {
+          transform: rotate(0);
+        }
+        25%,
+        35% {
+          transform: rotate(90deg);
+        }
+      }
+      #rotate small {
+        font-size: 12.5px;
+        font-weight: 600;
+        color: var(--dim);
+      }
+      @media (orientation: portrait) {
+        body.touch #rotate {
+          display: flex;
+        }
+      }
+
+      #hudticker {
+        position: absolute;
+        bottom: 16px;
+        left: 16px;
+        font-size: 11px;
+        font-weight: 900;
+        letter-spacing: 2px;
+        color: rgba(255, 179, 92, 0.85);
+        padding: 6px 12px;
+      }
       #conn {
         position: absolute;
         bottom: 16px;
@@ -382,36 +531,67 @@
         pointer-events: none;
       }
       #join .panel {
-        width: min(400px, 92vw);
-        padding: 34px 34px 28px;
+        width: min(500px, 94vw);
+        max-height: 94vh;
+        overflow-y: auto;
+        padding: 42px 44px 32px;
         text-align: center;
       }
+      #ticker {
+        display: inline-block;
+        margin-bottom: 10px;
+        padding: 4px 14px;
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 900;
+        letter-spacing: 2px;
+        color: #ffb35c;
+        border: 1px solid rgba(255, 159, 67, 0.55);
+        background: rgba(255, 159, 67, 0.1);
+        box-shadow: 0 0 18px rgba(255, 159, 67, 0.25);
+      }
       #logo {
-        font-size: 58px;
+        font-size: 64px;
         font-weight: 900;
         letter-spacing: 3px;
         line-height: 1;
         background: linear-gradient(
           180deg,
           #fff 20%,
-          var(--accent) 70%,
-          #a29bfe
+          #ff9f43 70%,
+          #ff6b6b
         );
         -webkit-background-clip: text;
         background-clip: text;
         -webkit-text-fill-color: transparent;
-        filter: drop-shadow(0 6px 30px rgba(72, 219, 251, 0.35));
+        filter: drop-shadow(0 6px 30px rgba(255, 159, 67, 0.4));
       }
       #tag {
-        margin: 8px 0 24px;
-        color: var(--dim);
-        font-size: 14px;
+        margin: 10px 0 26px;
+        color: rgba(242, 245, 251, 0.75);
+        font-size: 14.5px;
         font-weight: 600;
-        letter-spacing: 0.6px;
+        letter-spacing: 0.4px;
+        line-height: 1.55;
       }
-      #name {
+      #tag b {
+        color: #ffb35c;
+      }
+      .flabel {
+        text-align: left;
+        font-size: 10.5px;
+        font-weight: 800;
+        letter-spacing: 2px;
+        color: var(--dim);
+        margin: 16px 0 7px 2px;
+      }
+      .flabel .req {
+        color: #ffb35c;
+      }
+      #name,
+      #wallet {
         width: 100%;
-        padding: 13px 18px;
+        padding: 14px 18px;
         border-radius: 12px;
         border: 1px solid var(--card-border);
         background: rgba(255, 255, 255, 0.06);
@@ -423,14 +603,35 @@
         outline: none;
         transition: border-color 0.2s;
       }
-      #name:focus {
+      #wallet {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+      }
+      #name:focus,
+      #wallet:focus {
         border-color: var(--accent);
+      }
+      #wallet.bad {
+        border-color: #ff6b6b;
+        box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.15);
+      }
+      #walletnote {
+        text-align: left;
+        margin: 7px 0 0 2px;
+        font-size: 11.5px;
+        color: var(--dim);
+        line-height: 1.5;
+      }
+      #walletnote b {
+        color: var(--text);
       }
       #swatches {
         display: grid;
         grid-template-columns: repeat(6, 1fr);
-        gap: 9px;
-        margin: 18px 0 22px;
+        gap: 10px;
+        margin: 0 0 24px;
       }
       .sw {
         aspect-ratio: 1;
@@ -458,18 +659,18 @@
         font-size: 19px;
         font-weight: 900;
         letter-spacing: 2px;
-        color: #08131c;
-        background: linear-gradient(135deg, var(--accent), #7bed9f);
+        color: #1c0e04;
+        background: linear-gradient(135deg, #ff9f43, #feca57);
         cursor: pointer;
         transition:
           transform 0.15s,
           box-shadow 0.15s,
           filter 0.15s;
-        box-shadow: 0 8px 30px rgba(72, 219, 251, 0.35);
+        box-shadow: 0 8px 30px rgba(255, 159, 67, 0.4);
       }
       #play:hover {
         transform: translateY(-2px);
-        box-shadow: 0 12px 36px rgba(72, 219, 251, 0.5);
+        box-shadow: 0 12px 36px rgba(255, 159, 67, 0.55);
       }
       #play:active {
         transform: translateY(0);
@@ -496,35 +697,151 @@
         min-height: 15px;
       }
 
-      /* ── Pause overlay ──────────────────────────────────────────── */
+      /* ── Standings overlay (ESC) ────────────────────────────────── */
       #pause {
         position: fixed;
         inset: 0;
         display: none;
         align-items: center;
         justify-content: center;
-        background: rgba(6, 9, 18, 0.55);
-        backdrop-filter: blur(4px);
+        background: rgba(6, 9, 18, 0.6);
+        backdrop-filter: blur(6px);
         z-index: 9;
       }
       #pause.on {
         display: flex;
       }
       #pause .panel {
-        padding: 28px 36px;
+        width: min(620px, 94vw);
+        max-height: 92vh;
+        overflow-y: auto;
+        padding: 34px 38px 28px;
         text-align: center;
       }
       #pause h2 {
-        font-size: 24px;
+        font-size: 26px;
         font-weight: 900;
         letter-spacing: 2px;
-        margin-bottom: 14px;
+      }
+      #prize {
+        margin: 10px auto 22px;
+        padding: 10px 18px;
+        max-width: 480px;
+        border-radius: 12px;
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 1.5;
+        color: #ffd9a8;
+        border: 1px solid rgba(255, 159, 67, 0.35);
+        background: rgba(255, 159, 67, 0.08);
+      }
+      #prize b {
+        color: #ffb35c;
+      }
+      .shead {
+        text-align: left;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 2px;
+        color: var(--dim);
+        margin: 18px 0 8px 2px;
+      }
+      .srow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        font-size: 13.5px;
+        font-weight: 700;
+        text-align: left;
+      }
+      .srow:nth-child(odd) {
+        background: rgba(255, 255, 255, 0.035);
+      }
+      .srow.me .sname {
+        color: var(--gold);
+      }
+      .srank {
+        width: 24px;
+        flex: none;
+        font-size: 12px;
+        font-weight: 900;
+        color: var(--dim);
+        text-align: center;
+      }
+      .srow:nth-child(1) .srank {
+        color: var(--gold);
+      }
+      .srow:nth-child(2) .srank {
+        color: #cfd8e3;
+      }
+      .srow:nth-child(3) .srank {
+        color: #d69a6a;
+      }
+      .sname {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .salt {
+        flex: none;
+        color: var(--accent);
+        font-variant-numeric: tabular-nums;
+      }
+      .swallet {
+        flex: none;
+        width: 108px;
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 11.5px;
+        font-weight: 600;
+        color: rgba(242, 245, 251, 0.65);
+        text-align: right;
+      }
+      .swallet.free {
+        color: rgba(242, 245, 251, 0.3);
+        font-family: var(--font);
+        font-size: 10px;
+        letter-spacing: 1px;
+        font-weight: 800;
+      }
+      .cpy {
+        flex: none;
+        padding: 4px 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 159, 67, 0.4);
+        background: rgba(255, 159, 67, 0.1);
+        color: #ffb35c;
+        font-family: var(--font);
+        font-size: 10px;
+        font-weight: 900;
+        letter-spacing: 1px;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
+      .cpy:hover {
+        background: rgba(255, 159, 67, 0.25);
+        color: #ffd9a8;
+      }
+      .cpy.ok {
+        border-color: rgba(123, 237, 159, 0.5);
+        background: rgba(123, 237, 159, 0.12);
+        color: #7bed9f;
+      }
+      .sempty {
+        padding: 8px 10px;
+        font-size: 12.5px;
+        color: var(--dim);
+        text-align: left;
       }
       #pause .keys {
-        font-size: 13px;
+        font-size: 12.5px;
         color: var(--dim);
         line-height: 2;
-        margin-bottom: 18px;
+        margin: 20px 0 16px;
       }
       #pause .keys b {
         color: var(--text);
@@ -534,16 +851,128 @@
         margin-right: 4px;
       }
       #resume {
-        padding: 11px 34px;
+        padding: 13px 40px;
         border: none;
         border-radius: 12px;
         font-family: var(--font);
-        font-size: 15px;
-        font-weight: 800;
-        letter-spacing: 1px;
-        color: #08131c;
-        background: linear-gradient(135deg, var(--accent), #7bed9f);
+        font-size: 16px;
+        font-weight: 900;
+        letter-spacing: 1.5px;
+        color: #1c0e04;
+        background: linear-gradient(135deg, #ff9f43, #feca57);
         cursor: pointer;
+        box-shadow: 0 6px 24px rgba(255, 159, 67, 0.35);
+      }
+
+      /* ── Short landscape screens (phones): compact everything ─────
+         Kept LAST so it wins over the component rules above. */
+      @media (max-height: 520px) {
+        #alt {
+          font-size: 34px;
+        }
+        #alt small {
+          font-size: 16px;
+        }
+        #altwrap {
+          top: 8px;
+          padding: 5px 18px 8px;
+        }
+        #bestbar {
+          width: 130px;
+          margin: 4px auto 3px;
+        }
+        #board {
+          top: 8px;
+          right: 8px;
+          width: 196px;
+          padding: 9px 12px;
+          font-size: 11.5px;
+        }
+        #feed {
+          top: 8px;
+          left: 8px;
+          width: 210px;
+          font-size: 10.5px;
+        }
+        #milestone {
+          font-size: 54px;
+        }
+        .toast {
+          font-size: 13px;
+          padding: 7px 16px;
+        }
+        #hudticker {
+          bottom: 8px;
+          left: 8px;
+          font-size: 9px;
+          padding: 4px 9px;
+        }
+        #join .panel {
+          padding: 18px 26px 16px;
+        }
+        #logo {
+          font-size: 34px;
+        }
+        #ticker {
+          margin-bottom: 6px;
+          padding: 3px 10px;
+          font-size: 10px;
+        }
+        #tag {
+          margin: 6px 0 10px;
+          font-size: 12px;
+        }
+        .flabel {
+          margin: 8px 0 4px 2px;
+        }
+        #name,
+        #wallet {
+          padding: 8px 14px;
+          font-size: 14px;
+        }
+        #walletnote {
+          font-size: 10.5px;
+          margin-top: 4px;
+        }
+        #swatches {
+          gap: 7px;
+          margin: 0 0 12px;
+        }
+        #play {
+          padding: 10px;
+          font-size: 15px;
+        }
+        #joinhint {
+          display: none;
+        }
+        #joinbest {
+          margin-top: 6px;
+        }
+        #pause .panel {
+          padding: 16px 22px 14px;
+        }
+        #pause h2 {
+          font-size: 19px;
+        }
+        #prize {
+          margin: 8px auto 10px;
+          font-size: 11.5px;
+          padding: 7px 14px;
+        }
+        .srow {
+          padding: 5px 8px;
+          font-size: 12px;
+        }
+        #pause .keys {
+          display: none;
+        }
+        #resume {
+          padding: 9px 28px;
+          font-size: 13px;
+        }
+        #tboard {
+          bottom: max(44px, calc(env(safe-area-inset-bottom) + 44px));
+        }
       }
     </style>
   </head>
@@ -579,27 +1008,49 @@
           autocomplete="off"
         />
       </div>
+      <div id="hudticker" class="card">$BOOSTER</div>
       <div id="conn">RECONNECTING…</div>
     </div>
 
     <div id="join">
       <div class="panel card">
-        <div id="logo">TOPPLE</div>
+        <div id="ticker">$BOOSTER</div>
+        <div id="logo">BOOSTER</div>
         <div id="tag">
-          One endless tower. Highest blob wins. How high before you fall?
+          One tower. One summit. The first blob to reach the top takes the
+          <b>entire creator-reward pool</b> for this cycle. Everyone else
+          watches from below.
         </div>
+        <div class="flabel">BLOB NAME</div>
         <input
           id="name"
           maxlength="14"
           placeholder="name your blob"
           autocomplete="off"
         />
+        <div class="flabel">
+          SOLANA WALLET — <span class="req">REQUIRED TO WIN REWARDS</span>
+        </div>
+        <input
+          id="wallet"
+          maxlength="44"
+          placeholder="paste your Solana address"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div id="walletnote">
+          No wallet? You can still climb — <b>free play</b>, but no rewards
+          and no way to win the pool.
+        </div>
+        <div class="flabel">BLOB COLOUR</div>
         <div id="swatches"></div>
-        <button id="play">CLIMB</button>
+        <button id="play">SEND IT 🚀</button>
         <div id="joinhint">
           Drop straight into the live tower — no lobby, no rounds.<br />
           <b>WASD</b> + <b>Space</b> to climb · <b>F</b> to shove ·
-          <b>Shift</b> to sprint
+          <b>Shift</b> to sprint · <b>ESC</b> standings<br />
+          🚀 orange pads = <b>booster launch</b> · 🟡 gold rings =
+          <b>checkpoints</b>
         </div>
         <div id="joinbest"></div>
       </div>
@@ -607,14 +1058,38 @@
 
     <div id="pause">
       <div class="panel card">
-        <h2>PAUSED</h2>
+        <h2>🏆 TOWER STANDINGS</h2>
+        <div id="prize">
+          First blob to the <b>5000m SUMMIT</b> takes the entire
+          <b>$BOOSTER creator-reward pool</b> for this cycle. No wallet =
+          free play, not reward-eligible.
+        </div>
+        <h3 class="shead">LIVE CLIMB</h3>
+        <div id="slive"></div>
+        <h3 class="shead">ALL-TIME</h3>
+        <div id="sall"></div>
         <div class="keys">
           <b>WASD</b> move &nbsp; <b>Shift</b> sprint &nbsp;
-          <b>Space</b> jump<br />
-          <b>F</b> shove &nbsp; <b>Enter</b> chat &nbsp; <b>M</b> mute
+          <b>Space</b> jump &nbsp; <b>F</b> shove &nbsp; <b>Enter</b> chat
+          &nbsp; <b>M</b> mute
         </div>
-        <button id="resume">KEEP CLIMBING</button>
+        <button id="resume">KEEP SENDING 🚀</button>
       </div>
+    </div>
+
+    <div id="touchui">
+      <div id="joy"><div id="joynub"></div></div>
+      <div id="tbtns">
+        <button class="tbtn" id="tshove">💥</button>
+        <button class="tbtn" id="tjump">JUMP</button>
+      </div>
+      <button class="tbtn" id="tboard">🏆</button>
+    </div>
+
+    <div id="rotate">
+      <div class="r-emoji">📱</div>
+      ROTATE YOUR DEVICE
+      <small>BOOSTER is a landscape game — turn your phone sideways.</small>
     </div>
 
     <script type="module" src="/src/main.js"></script>

@@ -11,8 +11,10 @@ const ZONE_CHORDS = [
   [164.8, 196, 246.9], // dusk — Em
   [146.8, 185, 220], // space — D major
   [130.8, 164.8, 196], // deep — C major
+  [123.5, 155.6, 185], // nebula — B major, otherworldly
+  [110, 164.8, 220], // summit — open A5, thin and vast
 ];
-const ZONE_YS = [0, 130, 280, 500, 800, 1600];
+const ZONE_YS = [0, 130, 280, 500, 800, 1600, 2600, 4000];
 
 export class GameAudio {
   constructor() {
@@ -200,6 +202,13 @@ export class GameAudio {
   bounce() {
     this.blip({ type: "sine", from: 200, to: 640, dur: 0.22, gain: 0.16 });
     this.blip({ type: "sine", from: 400, to: 1280, dur: 0.22, gain: 0.05 });
+  }
+
+  boost() {
+    // $BOOSTER pad — rocket whoosh + rising scream
+    this.noiseBurst({ dur: 0.45, gain: 0.18, freq: 1600 });
+    this.blip({ type: "sawtooth", from: 120, to: 900, dur: 0.5, gain: 0.09 });
+    this.blip({ type: "sine", from: 300, to: 1800, dur: 0.45, gain: 0.06 });
   }
 
   bump() {

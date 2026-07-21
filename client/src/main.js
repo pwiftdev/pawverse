@@ -13,6 +13,15 @@ import { createTowerView } from "./tower-view.js";
 import { createEffects } from "./effects.js";
 import { GameAudio } from "./audio.js";
 import { createHud } from "./hud.js";
+import { isTouchDevice, setupTouch, bindHoldButton } from "./touch.js";
+
+// Touch devices get the virtual controls and never request pointer lock.
+const IS_TOUCH = isTouchDevice();
+if (IS_TOUCH) document.body.classList.add("touch");
+/** Pointer lock is a desktop concept — a no-op on touch. */
+function lockPointer() {
+  if (!IS_TOUCH) canvas.requestPointerLock?.();
+}
 
 // ── Renderer / scene ─────────────────────────────────────────────────────────
 
@@ -99,6 +108,32 @@ const input = new Input(canvas, {
   },
 });
 
+// ── Touch controls ───────────────────────────────────────────────────────────
+
+const touchUi = document.getElementById("touchui");
+if (IS_TOUCH) {
+  setupTouch(
+    canvas,
+    input,
+    document.getElementById("joy"),
+    document.getElementById("joynub"),
+  );
+  bindHoldButton(
+    document.getElementById("tjump"),
+    () => (input.touch.jump = true),
+    () => (input.touch.jump = false),
+  );
+  bindHoldButton(document.getElementById("tshove"), () => {
+    net.shove();
+    audio.noiseBurst({ dur: 0.12, gain: 0.05, freq: 3000 });
+  });
+  bindHoldButton(document.getElementById("tboard"), () => {
+    if (!playing) return;
+    if (pauseEl.classList.contains("on")) hideStandings();
+    else showStandings();
+  });
+}
+
 function openChatInput() {
   input.enabled = false;
   document.exitPointerLock?.();
@@ -107,34 +142,126 @@ function openChatInput() {
 function closeChatInput() {
   hud.closeChat();
   input.enabled = true;
-  if (playing) canvas.requestPointerLock?.();
+  if (playing) lockPointer();
 }
 // hud's own Enter/Escape handling calls onChat/closeChat; re-enable input after
 document.getElementById("chatinput").addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeChatInput();
 });
 
-// ── Pause overlay ────────────────────────────────────────────────────────────
+// ── Standings overlay (ESC) ──────────────────────────────────────────────────
 
 const pauseEl = document.getElementById("pause");
-document.getElementById("resume").addEventListener("click", () => {
+const sliveEl = document.getElementById("slive");
+const sallEl = document.getElementById("sall");
+let lastBoard = { live: [], all: [], rank: 0 };
+
+function shortWallet(w) {
+  return w.length > 10 ? `${w.slice(0, 4)}…${w.slice(-4)}` : w;
+}
+
+function standingsRow(r, idx, isMe) {
+  const walletCell = r.w
+    ? `<span class="swallet" title="${escapeHtml(r.w)}">${escapeHtml(shortWallet(r.w))}</span>` +
+      `<button class="cpy" data-w="${escapeHtml(r.w)}">COPY</button>`
+    : `<span class="swallet free">FREE PLAY</span>`;
+  return (
+    `<div class="srow${isMe ? " me" : ""}">` +
+    `<span class="srank">${idx + 1}</span>` +
+    `<span class="sname">${escapeHtml(r.n)}</span>` +
+    `<span class="salt">${r.alt}m</span>${walletCell}</div>`
+  );
+}
+
+function renderStandings() {
+  sliveEl.innerHTML = lastBoard.live.length
+    ? lastBoard.live
+        .map((r, i) => standingsRow(r, i, r.id === net.id))
+        .join("")
+    : '<div class="sempty">nobody on the tower right now</div>';
+  sallEl.innerHTML = lastBoard.all.length
+    ? lastBoard.all.map((r, i) => standingsRow(r, i, false)).join("")
+    : '<div class="sempty">no legends yet — be the first</div>';
+}
+
+/** Clipboard API first; textarea+execCommand fallback for http / older UAs. */
+function copyText(text) {
+  const legacy = () =>
+    new Promise((resolve, reject) => {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.cssText = "position:fixed;opacity:0";
+      document.body.append(ta);
+      ta.select();
+      let ok = false;
+      try {
+        ok = document.execCommand("copy");
+      } catch {
+        /* fall through */
+      }
+      ta.remove();
+      ok ? resolve() : reject(new Error("copy blocked"));
+    });
+  return navigator.clipboard?.writeText
+    ? navigator.clipboard.writeText(text).catch(legacy)
+    : legacy();
+}
+
+pauseEl.addEventListener("click", (e) => {
+  const btn = e.target.closest(".cpy");
+  if (!btn) return;
+  copyText(btn.dataset.w).then(
+    () => {
+      btn.textContent = "COPIED";
+      btn.classList.add("ok");
+      setTimeout(() => {
+        btn.textContent = "COPY";
+        btn.classList.remove("ok");
+      }, 1400);
+    },
+    () => hud.toast("couldn't copy — clipboard blocked", "bad"),
+  );
+});
+
+function showStandings() {
+  renderStandings();
+  pauseEl.classList.add("on");
+}
+function hideStandings() {
   pauseEl.classList.remove("on");
-  canvas.requestPointerLock?.();
+}
+
+document.getElementById("resume").addEventListener("click", () => {
+  hideStandings();
+  lockPointer();
 });
 document.addEventListener("pointerlockchange", () => {
   if (!playing) return;
   const locked = document.pointerLockElement === canvas;
-  if (!locked && !hud.chatOpen) pauseEl.classList.add("on");
-  else pauseEl.classList.remove("on");
+  if (!locked && !hud.chatOpen) showStandings();
+  else hideStandings();
+});
+// ESC also works when the pointer was never locked (e.g. after chat).
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !playing || hud.chatOpen) return;
+  if (document.pointerLockElement === canvas) return; // browser handles it
+  if (pauseEl.classList.contains("on")) hideStandings();
+  else showStandings();
 });
 
 // ── Join overlay ─────────────────────────────────────────────────────────────
 
 const joinEl = document.getElementById("join");
 const nameEl = document.getElementById("name");
+const walletEl = document.getElementById("wallet");
 const swatchesEl = document.getElementById("swatches");
 const playBtn = document.getElementById("play");
 const joinBestEl = document.getElementById("joinbest");
+
+// Solana public key: base58, 32–44 chars. Empty = free play (no rewards).
+const SOL_ADDR = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+walletEl.value = localStorage.getItem("booster-wallet") || "";
+walletEl.addEventListener("input", () => walletEl.classList.remove("bad"));
 
 const RANDOM_NAMES = [
   "Wobbles",
@@ -181,17 +308,27 @@ if (lifetimeBest > 0)
 
 playBtn.addEventListener("click", () => {
   const name = nameEl.value.trim().slice(0, 14) || "Blob";
+  const wallet = walletEl.value.trim();
+  if (wallet && !SOL_ADDR.test(wallet)) {
+    walletEl.classList.add("bad");
+    walletEl.focus();
+    hud.toast("that doesn't look like a Solana address", "bad");
+    return;
+  }
   localStorage.setItem("topple-name", name);
   localStorage.setItem("topple-color", String(colorIdx));
+  localStorage.setItem("booster-wallet", wallet);
   playBtn.disabled = true;
   playBtn.textContent = "CONNECTING…";
   audio.ensure();
-  net.connect(name, colorIdx);
+  net.connect(name, colorIdx, wallet);
 });
-nameEl.addEventListener("keydown", (e) => {
-  e.stopPropagation();
-  if (e.key === "Enter") playBtn.click();
-});
+for (const el of [nameEl, walletEl]) {
+  el.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") playBtn.click();
+  });
+}
 
 // ── Session state ────────────────────────────────────────────────────────────
 
@@ -203,6 +340,7 @@ net.on("welcome", () => {
   playing = true;
   sessionBest = 0;
   milestoneMark = 0;
+  zoneMark = 0;
   beatLifetime = false;
   hud.setConnecting(false);
   joinEl.classList.add("off");
@@ -215,7 +353,8 @@ net.on("welcome", () => {
   myBlob = createBlob(colorIdx);
   scene.add(myBlob.group);
   for (const id of remoteBlobs.keys()) removeRemoteBlob(id);
-  canvas.requestPointerLock?.();
+  touchUi.classList.add("on");
+  lockPointer();
 });
 
 net.on("disconnect", () => {
@@ -229,6 +368,8 @@ net.on("playerleave", (id) => removeRemoteBlob(id));
 // ── Leaderboard / crown / beacon ─────────────────────────────────────────────
 
 net.on("leaderboard", (msg) => {
+  lastBoard = msg;
+  if (pauseEl.classList.contains("on")) renderStandings();
   hud.setBoard(msg.live, msg.all, msg.rank, net.id, msg.leaderId);
   towerView.setBeacon(
     msg.leaderId !== null && msg.leaderId !== net.id ? msg.leaderPos : null,
@@ -351,8 +492,15 @@ function pumpInput(dt) {
     const m = net.move;
     if (ev.jumped) audio.jump();
     if (ev.bounced) {
-      audio.bounce();
-      effects.sparkle([m.x, m.y, m.z]);
+      if (ev.boosted) {
+        audio.boost();
+        effects.sparkle([m.x, m.y, m.z]);
+        effects.ring([m.x, m.y + 0.2, m.z]);
+        shake = Math.max(shake, 0.5);
+      } else {
+        audio.bounce();
+        effects.sparkle([m.x, m.y, m.z]);
+      }
     }
     if (ev.landed) {
       const impact = Math.abs(ev.impactVy);
@@ -364,12 +512,28 @@ function pumpInput(dt) {
     if (ev.voided) {
       audio.voided();
       effects.poof([m.x, m.y + 0.5, m.z]);
-      hud.toast("☁️ the wind carried you home", "bad");
+      hud.toast(
+        m.y > 4
+          ? `⛑ rescued to your rest ring — ${Math.round(m.y)}m banked`
+          : "☁️ the wind carried you home",
+        "bad",
+      );
     }
   }
 }
 
-// ── Milestones & personal bests ──────────────────────────────────────────────
+// ── Milestones, zones & personal bests ───────────────────────────────────────
+
+const ZONE_NAMES = [
+  [130, "☁️ THE CLOUD LAYER"],
+  [280, "🍯 THE HONEY SUNSET"],
+  [500, "🔮 THE DUSK CRYSTALS"],
+  [800, "🌌 DEEP SPACE"],
+  [1600, "✨ THE GOLDEN REACH"],
+  [2600, "🌠 THE NEBULA"],
+  [4000, "🏔 SUMMIT APPROACH"],
+];
+let zoneMark = 0;
 
 function trackProgress() {
   const alt = net.move.y;
@@ -380,6 +544,14 @@ function trackProgress() {
     milestoneMark = line;
     hud.milestone(line);
     audio.milestone();
+  }
+
+  // Zone announcements — first time this run you climb into a new band.
+  for (const [y, name] of ZONE_NAMES) {
+    if (sessionBest >= y && zoneMark < y) {
+      zoneMark = y;
+      hud.toast(`${name}`, "gold");
+    }
   }
 
   if (lifetimeBest >= 20 && !beatLifetime && alt > lifetimeBest) {

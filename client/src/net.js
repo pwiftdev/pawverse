@@ -56,8 +56,8 @@ export class Net {
     this.listeners.get(ev)?.forEach((fn) => fn(data));
   }
 
-  connect(name, color) {
-    this.connection = { name, color };
+  connect(name, color, wallet = "") {
+    this.connection = { name, color, wallet };
     this.shouldReconnect = true;
     this.openSocket();
   }
@@ -81,8 +81,8 @@ export class Net {
       this.connectTimer = null;
       this.lastMessageAt = Date.now();
       this.startWatchdog(ws);
-      const { name, color } = this.connection;
-      ws.send(JSON.stringify({ t: C2S.JOIN, name, color }));
+      const { name, color, wallet } = this.connection;
+      ws.send(JSON.stringify({ t: C2S.JOIN, name, color, wallet }));
     };
     ws.onmessage = (e) => {
       if (this.ws !== ws) return;
@@ -151,6 +151,9 @@ export class Net {
         const [x, y, z] = msg.you.p;
         this.move = createMoveState(x, z);
         this.move.y = y;
+        if (Array.isArray(msg.you.cp)) {
+          [this.move.cx, this.move.cy, this.move.cz] = msg.you.cp;
+        }
         for (const p of msg.players) this.upsertPlayer(p);
         this.emit("welcome", msg);
         break;
@@ -251,6 +254,7 @@ export class Net {
     s.yaw = serverP.ry;
     s.grounded = serverP.g === 1;
     s.groundType = Number.isInteger(serverP.gt) ? serverP.gt : P_NORMAL;
+    if (Array.isArray(serverP.cp)) [s.cx, s.cy, s.cz] = serverP.cp;
     // Timers aren't on the wire; the pending-input replay recreates their
     // effect over the window that matters.
     s.coyote = s.grounded ? 0 : 1;

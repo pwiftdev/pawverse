@@ -85,7 +85,9 @@ export function createHud({ onChat }) {
     },
 
     setBoard(live, all, rank, myId, leaderId) {
+      // side panel stays compact; the full 10-row board lives on ESC
       liveEl.innerHTML = live
+        .slice(0, 5)
         .map(
           (r) =>
             `<div class="row${r.id === myId ? " me" : ""}${
@@ -95,6 +97,7 @@ export function createHud({ onChat }) {
         .join("");
       allEl.innerHTML = all.length
         ? all
+            .slice(0, 5)
             .map(
               (r) =>
                 `<div class="row"><span class="n">${esc(r.n)}</span><span class="a">${r.alt}m</span></div>`,

@@ -28,6 +28,10 @@ export const ICE_DECEL = 0.9;
 export const COYOTE_TIME = 0.12; // s of grace after walking off an edge
 export const LAND_GRACE = 0.28; // m of horizontal forgiveness on platform edges
 export const BOUNCE_VELOCITY = 13.5; // bouncy pads launch you at this vy
+export const BOOST_VELOCITY = 19; // $BOOSTER pads — apex ≈ 7.5 m of free climb
+export const STICKY_SPEED_K = 0.55; // honey platforms: slow but sure-footed
+export const STICKY_ACCEL = 22; // honey grips instantly…
+export const STICKY_DECEL = 26; // …and stops you dead
 export const BODY_RADIUS = 0.42; // blob body radius for collisions
 
 // ── Player vs player ─────────────────────────────────────────────────────────

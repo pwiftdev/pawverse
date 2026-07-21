@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "TOPPLE \u2014 an endless multiplayer climb. One tower, no rounds; the highest blob wears the crown.",
+  "description": "BOOSTER ($BOOSTER) \u2014 one tower, one summit. First blob to the top takes the cycle's creator-reward pool.",
   "engines": {
     "node": "22.x",
     "npm": "10.x"

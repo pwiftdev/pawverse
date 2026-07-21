@@ -1,5 +1,5 @@
 // ─── Tower view ──────────────────────────────────────────────────────────────
-// Renders the endless climb FROM shared/tower.js data: the floating island,
+// Renders the summit race FROM shared/tower.js data: the floating island,
 // the platform helix (instanced, windowed around the camera), an altitude-
 // reactive sky with sun and stars, cloud layers, fog that breathes with the
 // zones, and the leader's crown beacon. 100% procedural — no assets.
@@ -9,9 +9,13 @@ import { ISLAND_RADIUS, MAX_ALTITUDE } from "../../shared/constants.js";
 import {
   islandHeightAt,
   PLATFORMS,
+  P_BOOST,
   P_BOUNCY,
   P_ICE,
   P_REST,
+  P_STICKY,
+  SH_BAR,
+  SH_HEX,
   seedRng,
 } from "../../shared/tower.js";
 
@@ -85,6 +89,28 @@ const ZONES = [
     hemi: 0x1c2038,
     sun: 0.45,
   },
+  {
+    y: 2600, // the nebula — magenta and teal dust between the stars
+    top: 0x0a0418,
+    hor: 0x3d1650,
+    fog: 0x220b34,
+    pt: 0xff7edb,
+    ps: 0x7a2f6d,
+    gl: 0xff9ae5,
+    hemi: 0x2f1a45,
+    sun: 0.35,
+  },
+  {
+    y: 4000, // summit approach — blinding white-gold, thin air
+    top: 0x060812,
+    hor: 0xfff3cf,
+    fog: 0x2a2410,
+    pt: 0xfff0c2,
+    ps: 0xa88b45,
+    gl: 0xffffff,
+    hemi: 0x4a4028,
+    sun: 0.9,
+  },
 ];
 
 const _a = new THREE.Color();
@@ -122,6 +148,7 @@ const SKY_FRAG = /* glsl */ `
   uniform vec3 uTop;
   uniform vec3 uHorizon;
   uniform float uStarK;
+  uniform float uNebK;
   uniform vec3 uSunDir;
   uniform float uSunK;
   varying vec3 vDir;
@@ -132,10 +159,30 @@ const SKY_FRAG = /* glsl */ `
     return fract((p.x + p.y) * p.z);
   }
 
+  // cheap trilinear value noise on the dome (for nebula clouds)
+  float vnoise(vec3 p) {
+    vec3 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = mix(hash13(i), hash13(i + vec3(1,0,0)), f.x);
+    float b = mix(hash13(i + vec3(0,1,0)), hash13(i + vec3(1,1,0)), f.x);
+    float c = mix(hash13(i + vec3(0,0,1)), hash13(i + vec3(1,0,1)), f.x);
+    float d = mix(hash13(i + vec3(0,1,1)), hash13(i + vec3(1,1,1)), f.x);
+    return mix(mix(a, b, f.y), mix(c, d, f.y), f.z);
+  }
+
   void main() {
     float h = clamp(vDir.y, -1.0, 1.0);
     float t = smoothstep(-0.12, 0.55, h);
     vec3 col = mix(uHorizon, uTop, t);
+
+    // nebula — two-tone dust clouds that fade in high above the gold zone
+    if (uNebK > 0.001) {
+      float n = vnoise(vDir * 3.1) * 0.6 + vnoise(vDir * 7.3) * 0.4;
+      float wisp = smoothstep(0.45, 0.8, n);
+      vec3 dust = mix(vec3(0.85, 0.25, 0.75), vec3(0.2, 0.75, 0.8),
+                      vnoise(vDir * 1.7 + 13.0));
+      col += dust * wisp * 0.35 * uNebK;
+    }
 
     // sun disc + halo
     float sd = max(dot(vDir, uSunDir), 0.0);
@@ -225,6 +272,7 @@ export function createTowerView(scene) {
     uTop: { value: new THREE.Color(ZONES[0].top) },
     uHorizon: { value: new THREE.Color(ZONES[0].hor) },
     uStarK: { value: 0 },
+    uNebK: { value: 0 },
     uSunDir: { value: new THREE.Vector3(0.42, 0.52, -0.74).normalize() },
     uSunK: { value: 1 },
   };
@@ -248,12 +296,13 @@ export function createTowerView(scene) {
   scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xfff2dd, 1.2);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.near = 1;
   sun.shadow.camera.far = 140;
   sun.shadow.camera.left = sun.shadow.camera.bottom = -30;
   sun.shadow.camera.right = sun.shadow.camera.top = 30;
-  sun.shadow.bias = -0.0005;
+  sun.shadow.bias = -0.0003;
+  sun.shadow.normalBias = 0.05; // kills acne/moiré on the dome + platform tops
   scene.add(sun, sun.target);
 
   // ── The floating island ────────────────────────────────────────────────────
@@ -339,8 +388,15 @@ export function createTowerView(scene) {
   }
 
   // ── Platform instancing (windowed around the camera) ───────────────────────
+  // Three shape families, each with real collision in shared/tower.js:
+  // discs (14-gon), hexes (6-gon slabs), and bar planks (boxes).
+  // The side body's top face sits 0.06 m BELOW the walk surface, tucked inside
+  // the top slab — coplanar faces here caused visible z-fighting flicker.
   const sideGeo = new THREE.CylinderGeometry(0.94, 0.8, 0.5, 14);
   const topGeo = new THREE.CylinderGeometry(1, 0.97, 0.12, 14);
+  const hexSideGeo = new THREE.CylinderGeometry(0.94, 0.78, 0.5, 6);
+  const hexTopGeo = new THREE.CylinderGeometry(1, 0.96, 0.12, 6);
+  const barGeo = new THREE.BoxGeometry(1, 1, 1);
   const sideMat = new THREE.MeshStandardMaterial({
     roughness: 0.85,
     flatShading: true,
@@ -348,12 +404,26 @@ export function createTowerView(scene) {
   const topMat = new THREE.MeshStandardMaterial({ roughness: 0.7 });
   const sideMesh = new THREE.InstancedMesh(sideGeo, sideMat, MAX_PLAT);
   const topMesh = new THREE.InstancedMesh(topGeo, topMat, MAX_PLAT);
-  sideMesh.frustumCulled = topMesh.frustumCulled = false;
-  topMesh.castShadow = true;
-  topMesh.receiveShadow = true;
-  scene.add(sideMesh, topMesh);
+  const hexSideMesh = new THREE.InstancedMesh(hexSideGeo, sideMat, MAX_PLAT);
+  const hexTopMesh = new THREE.InstancedMesh(hexTopGeo, topMat, MAX_PLAT);
+  const barMesh = new THREE.InstancedMesh(
+    barGeo,
+    new THREE.MeshStandardMaterial({ roughness: 0.75, flatShading: true }),
+    MAX_PLAT,
+  );
+  sideMesh.frustumCulled =
+    topMesh.frustumCulled =
+    hexSideMesh.frustumCulled =
+    hexTopMesh.frustumCulled =
+    barMesh.frustumCulled =
+      false;
+  topMesh.castShadow = topMesh.receiveShadow = true;
+  hexTopMesh.castShadow = hexTopMesh.receiveShadow = true;
+  barMesh.castShadow = barMesh.receiveShadow = true;
+  scene.add(sideMesh, topMesh, hexSideMesh, hexTopMesh, barMesh);
 
-  // glow rings (rest platforms, bouncy pads, high-zone neon rims)
+  // glow rings (rest platforms, launch pads, high-zone neon rims)
+  const MAX_RING = 160;
   const ringGeo = new THREE.TorusGeometry(1, 0.045, 8, 40);
   ringGeo.rotateX(-Math.PI / 2);
   const ringMat = new THREE.MeshBasicMaterial({
@@ -362,28 +432,48 @@ export function createTowerView(scene) {
     blending: THREE.AdditiveBlending,
     depthWrite: false,
   });
-  const ringMesh = new THREE.InstancedMesh(ringGeo, ringMat, 96);
+  const ringMesh = new THREE.InstancedMesh(ringGeo, ringMat, MAX_RING);
   ringMesh.frustumCulled = false;
   scene.add(ringMesh);
 
-  // decor: grass tufts low, crystals high
+  // decor: grass tufts + flowers low, honey drips mid, crystals high
   const decorTuftMesh = new THREE.InstancedMesh(
     new THREE.ConeGeometry(0.07, 0.34, 5),
     new THREE.MeshStandardMaterial({ color: 0x7ccf77, roughness: 1 }),
     MAX_DECOR,
   );
+  const flowerMesh = new THREE.InstancedMesh(
+    new THREE.IcosahedronGeometry(0.075, 0),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 }),
+    MAX_DECOR,
+  );
+  const FLOWER_COLORS = [0xff8fb3, 0xfff2a8, 0xbfe0ff, 0xffb27d];
+  const dripMesh = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(0.11, 8, 6),
+    new THREE.MeshStandardMaterial({
+      color: 0xf5a623,
+      emissive: 0x7a4b08,
+      emissiveIntensity: 0.35,
+      roughness: 0.25,
+    }),
+    MAX_DECOR,
+  );
   const crystalMesh = new THREE.InstancedMesh(
     new THREE.OctahedronGeometry(0.16, 0),
     new THREE.MeshStandardMaterial({
-      color: 0xbcaeff,
-      emissive: 0x7a5fff,
-      emissiveIntensity: 0.9,
+      color: 0xffffff, // tinted per instance by altitude band
+      emissive: 0x8f8f8f,
+      emissiveIntensity: 0.5,
       roughness: 0.3,
     }),
     MAX_DECOR,
   );
-  decorTuftMesh.frustumCulled = crystalMesh.frustumCulled = false;
-  scene.add(decorTuftMesh, crystalMesh);
+  decorTuftMesh.frustumCulled =
+    flowerMesh.frustumCulled =
+    dripMesh.frustumCulled =
+    crystalMesh.frustumCulled =
+      false;
+  scene.add(decorTuftMesh, flowerMesh, dripMesh, crystalMesh);
 
   const zoneScratch = {};
   let lastBucket = Infinity;
@@ -392,8 +482,12 @@ export function createTowerView(scene) {
     const lo = camY - WINDOW_M;
     const hi = camY + WINDOW_M;
     let nPlat = 0,
+      nHex = 0,
+      nBar = 0,
       nRing = 0,
       nTuft = 0,
+      nFlower = 0,
+      nDrip = 0,
       nCrystal = 0;
     // binary search the window start in the sorted list
     let a = 0,
@@ -405,34 +499,69 @@ export function createTowerView(scene) {
     }
     for (let i = a; i < SORTED.length && SORTED[i].y <= hi; i++) {
       const p = SORTED[i];
-      if (nPlat >= MAX_PLAT) break;
+      if (nPlat >= MAX_PLAT || nHex >= MAX_PLAT || nBar >= MAX_PLAT) break;
       const z = zoneAt(p.y, zoneScratch);
       const jag = 0.92 + (((p.i * 2654435761) % 100) / 100) * 0.16; // stable jitter
 
-      // side
-      _q.identity();
-      _sv.set(p.r, 1, p.r);
-      _pv.set(p.x, p.y - 0.25, p.z);
-      _m.compose(_pv, _q, _sv);
-      sideMesh.setMatrixAt(nPlat, _m);
-      _c.copy(z.ps).multiplyScalar(jag);
-      sideMesh.setColorAt(nPlat, _c);
-
-      // top
-      _pv.set(p.x, p.y - 0.06, p.z);
-      _m.compose(_pv, _q, _sv);
-      topMesh.setMatrixAt(nPlat, _m);
+      // colours shared by every shape
+      const sideC = _c;
+      if (p.type === P_BOOST) sideC.setHex(0x39404f); // rocket-pad charcoal
+      else if (p.type === P_STICKY) sideC.setHex(0x9a6a2a); // honeycomb
+      else sideC.copy(z.ps).multiplyScalar(jag);
+      const sideHex = sideC.getHex();
       if (p.type === P_BOUNCY) _c.setHex(0xff7edb);
+      else if (p.type === P_BOOST) _c.setHex(0xff8c3a);
+      else if (p.type === P_STICKY) _c.setHex(0xf5b043);
       else if (p.type === P_ICE) _c.setHex(0xcfeaff);
       else _c.copy(z.pt).multiplyScalar(jag);
-      topMesh.setColorAt(nPlat, _c);
-      nPlat++;
+      const topHex = _c.getHex();
+
+      if (p.shape === SH_BAR) {
+        // one solid plank — top face IS the walk surface
+        _q.setFromAxisAngle(_pv.set(0, 1, 0), -p.rot);
+        _sv.set(p.hx * 2, 0.5, p.hz * 2);
+        _pv.set(p.x, p.y - 0.25, p.z);
+        _m.compose(_pv, _q, _sv);
+        barMesh.setMatrixAt(nBar, _m);
+        barMesh.setColorAt(nBar, _c.setHex(topHex));
+        nBar++;
+      } else if (p.shape === SH_HEX) {
+        _q.setFromAxisAngle(_pv.set(0, 1, 0), p.rot || 0);
+        // hex collision is the inscribed circle; 1.12 balances corner overhang
+        // vs edge undershoot within the landing grace
+        _sv.set(p.r * 1.12, 1, p.r * 1.12);
+        _pv.set(p.x, p.y - 0.31, p.z);
+        _m.compose(_pv, _q, _sv);
+        hexSideMesh.setMatrixAt(nHex, _m);
+        hexSideMesh.setColorAt(nHex, _c.setHex(sideHex));
+        _pv.set(p.x, p.y - 0.06, p.z);
+        _m.compose(_pv, _q, _sv);
+        hexTopMesh.setMatrixAt(nHex, _m);
+        hexTopMesh.setColorAt(nHex, _c.setHex(topHex));
+        nHex++;
+      } else {
+        _q.identity();
+        _sv.set(p.r, 1, p.r);
+        _pv.set(p.x, p.y - 0.31, p.z);
+        _m.compose(_pv, _q, _sv);
+        sideMesh.setMatrixAt(nPlat, _m);
+        sideMesh.setColorAt(nPlat, _c.setHex(sideHex));
+        _pv.set(p.x, p.y - 0.06, p.z);
+        _m.compose(_pv, _q, _sv);
+        topMesh.setMatrixAt(nPlat, _m);
+        topMesh.setColorAt(nPlat, _c.setHex(topHex));
+        nPlat++;
+      }
 
       // glow ring for special platforms and the neon zones
       const neon = p.y > 700;
       if (
-        nRing < 96 &&
-        (p.type === P_REST || p.type === P_BOUNCY || (neon && p.type !== P_ICE))
+        nRing < MAX_RING &&
+        p.shape !== SH_BAR && // circular glow reads wrong on a plank
+        (p.type === P_REST ||
+          p.type === P_BOUNCY ||
+          p.type === P_BOOST ||
+          (neon && p.type !== P_ICE))
       ) {
         _pv.set(p.x, p.y + 0.03, p.z);
         _sv.set(p.r * 1.02, 1, p.r * 1.02);
@@ -440,9 +569,20 @@ export function createTowerView(scene) {
         ringMesh.setMatrixAt(nRing, _m);
         if (p.type === P_REST) _c.setHex(0xffd166);
         else if (p.type === P_BOUNCY) _c.setHex(0xff9ae5);
+        else if (p.type === P_BOOST) _c.setHex(0xff9048);
         else _c.copy(z.gl);
         ringMesh.setColorAt(nRing, _c);
         nRing++;
+        // boost pads get a second, inner "nozzle" ring — reads as a launcher
+        if (p.type === P_BOOST && nRing < MAX_RING) {
+          _sv.set(p.r * 0.55, 1, p.r * 0.55);
+          _pv.set(p.x, p.y + 0.06, p.z);
+          _m.compose(_pv, _q, _sv);
+          ringMesh.setMatrixAt(nRing, _m);
+          _c.setHex(0xffd9a8);
+          ringMesh.setColorAt(nRing, _c);
+          nRing++;
+        }
       }
 
       // decor
@@ -458,28 +598,73 @@ export function createTowerView(scene) {
           _m.compose(_pv, _q, _sv);
           decorTuftMesh.setMatrixAt(nTuft++, _m);
         }
-      } else if (p.y > 480 && p.y < 1600 && drand() < 0.55) {
+        // meadow flowers
+        if (drand() < 0.5 && nFlower < MAX_DECOR) {
+          const a2 = drand() * Math.PI * 2;
+          const rr = drand() * (p.r - 0.3);
+          _q.identity();
+          _sv.setScalar(0.7 + drand() * 0.6);
+          _pv.set(p.x + Math.cos(a2) * rr, p.y + 0.08, p.z + Math.sin(a2) * rr);
+          _m.compose(_pv, _q, _sv);
+          flowerMesh.setMatrixAt(nFlower, _m);
+          _c.setHex(FLOWER_COLORS[Math.floor(drand() * FLOWER_COLORS.length)]);
+          flowerMesh.setColorAt(nFlower, _c);
+          nFlower++;
+        }
+      } else if (p.type === P_STICKY) {
+        // honey drips hanging off the rim
+        const n = 2 + Math.floor(drand() * 3);
+        for (let d = 0; d < n && nDrip < MAX_DECOR; d++) {
+          const a2 = drand() * Math.PI * 2;
+          _q.identity();
+          _sv.set(0.8, 1.4 + drand() * 1.2, 0.8);
+          _pv.set(
+            p.x + Math.cos(a2) * p.r * 0.96,
+            p.y - 0.28 - drand() * 0.25,
+            p.z + Math.sin(a2) * p.r * 0.96,
+          );
+          _m.compose(_pv, _q, _sv);
+          dripMesh.setMatrixAt(nDrip++, _m);
+        }
+      } else if (p.y > 480 && drand() < 0.55 && nCrystal < MAX_DECOR) {
         const a2 = drand() * Math.PI * 2;
         const rr = 0.3 + drand() * (p.r - 0.5);
         _q.setFromEuler(new THREE.Euler(drand(), drand() * 3, drand()));
         _sv.setScalar(0.7 + drand() * 0.9);
         _pv.set(p.x + Math.cos(a2) * rr, p.y + 0.18, p.z + Math.sin(a2) * rr);
         _m.compose(_pv, _q, _sv);
-        crystalMesh.setMatrixAt(nCrystal++, _m);
+        crystalMesh.setMatrixAt(nCrystal, _m);
+        // crystal hue shifts with the zone: violet → gold → nebula pink
+        if (p.y < 1600) _c.setHex(0xbcaeff);
+        else if (p.y < 2600) _c.setHex(0xffd166);
+        else _c.setHex(0xff9ae5);
+        crystalMesh.setColorAt(nCrystal, _c);
+        nCrystal++;
       }
     }
     sideMesh.count = topMesh.count = nPlat;
+    hexSideMesh.count = hexTopMesh.count = nHex;
+    barMesh.count = nBar;
     ringMesh.count = nRing;
     decorTuftMesh.count = nTuft;
+    flowerMesh.count = nFlower;
+    dripMesh.count = nDrip;
     crystalMesh.count = nCrystal;
-    sideMesh.instanceMatrix.needsUpdate = true;
-    topMesh.instanceMatrix.needsUpdate = true;
-    ringMesh.instanceMatrix.needsUpdate = true;
-    decorTuftMesh.instanceMatrix.needsUpdate = true;
-    crystalMesh.instanceMatrix.needsUpdate = true;
-    if (sideMesh.instanceColor) sideMesh.instanceColor.needsUpdate = true;
-    if (topMesh.instanceColor) topMesh.instanceColor.needsUpdate = true;
-    if (ringMesh.instanceColor) ringMesh.instanceColor.needsUpdate = true;
+    for (const mesh of [
+      sideMesh,
+      topMesh,
+      hexSideMesh,
+      hexTopMesh,
+      barMesh,
+      ringMesh,
+      decorTuftMesh,
+      flowerMesh,
+      dripMesh,
+      crystalMesh,
+    ]) {
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
   }
 
   // ── Clouds ─────────────────────────────────────────────────────────────────
@@ -599,7 +784,13 @@ export function createTowerView(scene) {
         1,
         Math.max(0, (camPos.y - 420) / 260) + (camPos.y > 1600 ? 0.15 : 0),
       );
+      skyUniforms.uNebK.value = Math.min(
+        1,
+        Math.max(0, (camPos.y - 2200) / 500),
+      );
       skyUniforms.uSunK.value = z.sun;
+      // special-platform rings breathe gently
+      ringMat.opacity = 0.68 + 0.22 * Math.sin(seaTime * 3.1);
       scene.fog.color.copy(z.fog);
       const spaceK = Math.min(1, Math.max(0, (camPos.y - 600) / 300));
       scene.fog.near = 55 + spaceK * 45;
@@ -607,8 +798,13 @@ export function createTowerView(scene) {
       hemi.color.copy(z.hemi);
       hemi.groundColor.copy(z.fog).multiplyScalar(0.6);
       sun.intensity = z.sun;
-      sun.position.set(playerPos.x + 26, playerPos.y + 34, playerPos.z - 18);
-      sun.target.position.set(playerPos.x, playerPos.y, playerPos.z);
+      // Anchor the shadow camera to a coarse grid: moving it continuously
+      // with the player makes shadow-map texels swim (platform flicker).
+      const ax = Math.round(playerPos.x / 6) * 6;
+      const ay = Math.round(playerPos.y / 6) * 6;
+      const az = Math.round(playerPos.z / 6) * 6;
+      sun.position.set(ax + 26, ay + 34, az - 18);
+      sun.target.position.set(ax, ay, az);
 
       seaTime += dt;
       cloudSea.material.uniforms.uTime.value = seaTime;
